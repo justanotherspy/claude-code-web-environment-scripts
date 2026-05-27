@@ -94,6 +94,7 @@ On top of the pre-installed image, in parallel:
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
 | `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
+| `garlic`         | `cargo binstall garlic-ward` (crates.io + GitHub) | Tracks coding time and nudges breaks (justanotherspy/garlic) |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
 | `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
 | `sproot`         | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo     |
@@ -119,7 +120,8 @@ The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
 (apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
 steps work out of the box: `gh`, `shellcheck`, `unzip`, `semgrep`, `sproot`,
-`shuck`, `cargo-binstall` (GitHub), `golangci-lint` (`golangci-lint.run` is
+`shuck`, `cargo-binstall` (GitHub), `garlic` (`cargo binstall garlic-ward`, via
+crates.io + GitHub release assets), `golangci-lint` (`golangci-lint.run` is
 already listed below), and the `go install` tools `goimports`/`staticcheck`
 (`proxy.golang.org`).
 

@@ -25,7 +25,8 @@
 # (apt, PyPI, GitHub, crates.io, the Go module proxy, ...). These steps come
 # from Trusted hosts and work out of the box: gh, shellcheck, unzip (apt),
 # semgrep (PyPI), sproot, shuck (raw.githubusercontent.com + GitHub release
-# assets), cargo-binstall (GitHub), golangci-lint (golangci-lint.run + GitHub),
+# assets), cargo-binstall (GitHub), garlic (cargo binstall garlic-ward, from
+# crates.io + GitHub release assets), golangci-lint (golangci-lint.run + GitHub),
 # and the `go install` tools (goimports, staticcheck via proxy.golang.org).
 #
 # These steps fetch from hosts that are NOT on the Trusted list, so the
@@ -91,6 +92,21 @@ install_cargo_binstall() {
   # Surface it on the system PATH (it installs into $CARGO_HOME/bin by default).
   [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/cargo-binstall" ] \
     && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/cargo-binstall" /usr/local/bin/cargo-binstall
+}
+
+# garlic CLI (justanotherspy/garlic): tracks active coding time with Claude Code
+# and nudges breaks. Installed as a prebuilt binary via cargo-binstall, which
+# pulls the garlic-ward GitHub Release asset (crates.io + GitHub are both on the
+# Trusted list), so this runs after install_cargo_binstall, not in parallel.
+install_garlic() {
+  command -v garlic >/dev/null 2>&1 && { log "garlic CLI already present"; return; }
+  command -v cargo-binstall >/dev/null 2>&1 || { warn "cargo-binstall not found; skipping garlic"; return; }
+  log "garlic CLI (justanotherspy/garlic)"
+  cargo binstall -y garlic-ward \
+    || { warn "garlic install failed"; return; }
+  # Surface it on the system PATH (cargo installs into $CARGO_HOME/bin).
+  [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/garlic" ] \
+    && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/garlic" /usr/local/bin/garlic
 }
 
 # Replace the base image's Go with the pinned latest. go.dev/dl redirects the
@@ -176,7 +192,9 @@ install_sproot &
 install_shuck &
 install_uv &
 install_bun &
-install_cargo_binstall &
+# garlic installs through cargo-binstall, so the two run in sequence (in
+# parallel with the rest of the fan-out).
+( install_cargo_binstall; install_garlic ) &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.
