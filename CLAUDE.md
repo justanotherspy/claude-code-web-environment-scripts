@@ -58,8 +58,9 @@ the coupling is invisible from the code alone:
 
 - Under the default **Trusted** level these work (apt / PyPI / GitHub /
   githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
-  `semgrep`, `sproot`, `shuck`, `cargo-binstall`, `golangci-lint`, and the
-  `go install` tools (`goimports`, `staticcheck`).
+  `semgrep`, `sproot`, `shuck`, `cargo-binstall`, `garlic` (`cargo binstall
+  garlic-ward`), `golangci-lint`, and the `go install` tools (`goimports`,
+  `staticcheck`).
 - `uv` (`astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
   (`go.dev/dl` redirects to `dl.google.com`), `sprite`, and `flyctl` download
   from hosts **not** on the Trusted list, so the environment must use **Custom**
