@@ -40,7 +40,10 @@ shape every edit — they are easy to violate and break session startup:
   `set -e`.
 - **Only install what the base image lacks.** The cloud image already ships
   Python, Node, Ruby, Go, Rust, Java, PHP, Docker, Postgres, Redis, git, jq,
-  ripgrep, and the common test runners. Don't reinstall those.
+  ripgrep, and the common test runners. Don't reinstall those. Exceptions the
+  script makes on purpose: it adds `uv`, `bun`, and `cargo-binstall` (absent
+  from the base) and **upgrades** Go to the pinned `GO_VERSION` because the base
+  Go lags the latest release.
 - **Keep total runtime under ~5 minutes** so the cache can build. `apt` runs
   first and to completion (it holds the dpkg lock), then independent downloads
   fan out with `&` and a single `wait`.
@@ -53,12 +56,16 @@ shape every edit — they are easy to violate and break session startup:
 The script and the environment's network configuration are tightly coupled, and
 the coupling is invisible from the code alone:
 
-- Under the default **Trusted** level, only `gh`, `shellcheck`, `semgrep`,
-  `sproot`, and `shuck` work (apt / PyPI / GitHub / githubusercontent hosts).
-- `sprite` and `flyctl` download from hosts **not** on the Trusted list, so the
-  environment must use **Custom** access (with default package managers still
-  enabled) plus the allowlist documented in the README's "Network access"
-  section. Without those domains, the sprite/fly steps log a warning and skip.
+- Under the default **Trusted** level these work (apt / PyPI / GitHub /
+  githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
+  `semgrep`, `sproot`, `shuck`, `cargo-binstall`, `golangci-lint`, and the
+  `go install` tools (`goimports`, `staticcheck`).
+- `uv` (`astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
+  (`go.dev/dl` redirects to `dl.google.com`), `sprite`, and `flyctl` download
+  from hosts **not** on the Trusted list, so the environment must use **Custom**
+  access (with default package managers still enabled) plus the allowlist
+  documented in the README's "Network access" section. Without those domains,
+  the matching step logs a warning and skips.
 
 If you add a step that fetches from a new host, you must also update the
 README's recommended allowlist — otherwise it will silently fail in the cloud.
@@ -68,6 +75,10 @@ README's recommended allowlist — otherwise it will silently fail in the cloud.
 `sproot` and `shuck` track **latest** by default. Their installers read
 `SPROOT_VERSION` / `SHUCK_VERSION` env vars (e.g. `v0.3.5`) for pinned,
 reproducible caches — set those in the environment, not in the script.
+
+The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
+(default `1.26.3`, overridable from the environment). `uv`, `bun`,
+`golangci-lint`, and the `go install` tools track latest.
 
 ## Debugging
 
