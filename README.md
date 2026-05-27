@@ -81,19 +81,34 @@ that should run everywhere, like `npm install` — and gate it on
 
 On top of the pre-installed image, in parallel:
 
-| Tool         | Source                                   | Notes                                              |
-| ------------ | ---------------------------------------- | -------------------------------------------------- |
-| `gh`         | apt                                      | GitHub CLI (not pre-installed)                     |
-| `shellcheck` | apt                                      | Shell linting                                      |
-| `semgrep`    | PyPI                                     | Static analysis                                    |
-| `flyctl`     | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**         |
-| `sprite`     | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**     |
-| `sproot`     | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo   |
-| `shuck`      | `raw.githubusercontent.com/.../shuck`    | Returns the exact failing CI step logs for a PR    |
+| Tool             | Source                                   | Notes                                                |
+| ---------------- | ---------------------------------------- | ---------------------------------------------------- |
+| `gh`             | apt                                      | GitHub CLI (not pre-installed)                       |
+| `shellcheck`     | apt                                      | Shell linting                                        |
+| `unzip`          | apt                                      | Required by the `bun` installer                      |
+| `semgrep`        | PyPI                                     | Static analysis                                      |
+| `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager — **needs non-default domains** |
+| `bun`            | `bun.sh/install`                         | JS runtime / package manager — **needs non-default domains**   |
+| `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
+| `golangci-lint`  | `golangci-lint.run/install.sh`           | Go linter (prebuilt binary)                          |
+| `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
+| `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
+| `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
+| `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
+| `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
+| `sproot`         | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo     |
+| `shuck`          | `raw.githubusercontent.com/.../shuck`    | Returns the exact failing CI step logs for a PR      |
+
+The base image already ships `cargo`/`rustc`, so the Rust step just adds
+`cargo-binstall`, which then installs any further cargo tools as prebuilt
+binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
+compiling them.
 
 Versions track **latest** by default. To pin for fully reproducible caches, set
 `SPROOT_VERSION` / `SHUCK_VERSION` (e.g. `v0.3.5`) as environment variables —
-both installers read them automatically.
+both installers read them automatically. The Go toolchain is pinned via
+`GO_VERSION` (default `1.26.3`); set it to upgrade or roll back the installed
+Go.
 
 Failures are non-fatal: each step logs a `setup: WARNING: …` to stderr (visible
 in the setup logs) and the session still starts.
@@ -102,13 +117,22 @@ in the setup logs) and the session still starts.
 
 The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
-(apt, PyPI, GitHub, crates.io, …). Under Trusted, these steps work out of the
-box: `gh`, `shellcheck`, `semgrep`, `sproot`, and `shuck`.
+(apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
+steps work out of the box: `gh`, `shellcheck`, `unzip`, `semgrep`, `sproot`,
+`shuck`, `cargo-binstall` (GitHub), `golangci-lint` (`golangci-lint.run` is
+already listed below), and the `go install` tools `goimports`/`staticcheck`
+(`proxy.golang.org`).
 
-The **sprite CLI** and **flyctl** download from hosts that are **not** on the
-Trusted list, so this environment uses **Custom** network access — *with the
-default package managers enabled* — plus the allowlist below. Without it, the
-`sprite`/`fly` steps log a warning and are skipped.
+Some steps download from hosts that are **not** on the Trusted list, so this
+environment uses **Custom** network access — *with the default package managers
+enabled* — plus the allowlist below. Without these domains the matching step
+logs a warning and is skipped:
+
+- `uv` → `astral.sh` / `*.astral.sh`
+- `bun` → `bun.sh` / `*.bun.sh`
+- `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
+- `sprite` → `sprites.dev` / `*.sprites.dev` / `sprites-binaries.t3.storage.dev`
+- `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
 
 Recommended **Custom** allowlist for this environment (one domain per line):
 
@@ -130,6 +154,11 @@ api.machines.dev
 sprites.dev
 *.sprites.dev
 sprites-binaries.t3.storage.dev
+astral.sh
+*.astral.sh
+bun.sh
+*.bun.sh
+dl.google.com
 golangci-lint.run
 *.blob.core.windows.net
 *.githubusercontent.com
