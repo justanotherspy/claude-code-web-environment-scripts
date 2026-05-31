@@ -99,6 +99,9 @@ On top of the pre-installed image, in parallel:
 | `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
 | `sproot`         | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo     |
 | `shuck`          | `raw.githubusercontent.com/.../shuck`    | Returns the exact failing CI step logs for a PR      |
+| `hadolint`       | GitHub releases (`hadolint/hadolint`)    | Dockerfile linter (static binary)                    |
+| `dive`           | GitHub releases (`wagoodman/dive`)       | Inspect image layers / find wasted space             |
+| `trivy`          | GitHub (`aquasecurity/trivy` install.sh) | Scan images, filesystems & Dockerfiles for vulns/misconfigs |
 
 The base image already ships `cargo`/`rustc`, so the Rust step just adds
 `cargo-binstall`, which then installs any further cargo tools as prebuilt
@@ -122,8 +125,9 @@ reach. The default **Trusted** level allows the bundled package registries
 steps work out of the box: `gh`, `shellcheck`, `unzip`, `semgrep`, `sproot`,
 `shuck`, `cargo-binstall` (GitHub), `garlic` (`cargo binstall garlic-ward`, via
 crates.io + GitHub release assets), `golangci-lint` (`golangci-lint.run` is
-already listed below), and the `go install` tools `goimports`/`staticcheck`
-(`proxy.golang.org`).
+already listed below), the `go install` tools `goimports`/`staticcheck`
+(`proxy.golang.org`), and the Docker image tools `hadolint`, `dive` and `trivy`
+(all from GitHub release assets).
 
 Some steps download from hosts that are **not** on the Trusted list, so this
 environment uses **Custom** network access — *with the default package managers

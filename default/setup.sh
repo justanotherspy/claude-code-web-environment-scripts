@@ -27,7 +27,8 @@
 # semgrep (PyPI), sproot, shuck (raw.githubusercontent.com + GitHub release
 # assets), cargo-binstall (GitHub), garlic (cargo binstall garlic-ward, from
 # crates.io + GitHub release assets), golangci-lint (golangci-lint.run + GitHub),
-# and the `go install` tools (goimports, staticcheck via proxy.golang.org).
+# the `go install` tools (goimports, staticcheck via proxy.golang.org), and the
+# Docker image tools hadolint, dive and trivy (all from GitHub release assets).
 #
 # These steps fetch from hosts that are NOT on the Trusted list, so the
 # environment must use "Custom" network access with the default package
@@ -181,6 +182,59 @@ install_shuck() {
     || warn "shuck install failed"
 }
 
+# --- Docker image development tooling -------------------------------------
+# Docker itself ships in the base image; these add the tools for *authoring*
+# and inspecting images. All three pull prebuilt binaries from GitHub release
+# assets (api.github.com + github.com + *.githubusercontent.com), which the
+# Trusted network level already permits — no extra allowlist domains needed.
+
+# hadolint: Dockerfile linter. Ships as a single static binary whose asset name
+# is stable under /releases/latest/download, so no version lookup is needed.
+install_hadolint() {
+  command -v hadolint >/dev/null 2>&1 && { log "hadolint already present"; return; }
+  log "hadolint (Dockerfile linter)"
+  if curl -fsSL -o /usr/local/bin/hadolint \
+       "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64"; then
+    chmod +x /usr/local/bin/hadolint
+  else
+    warn "hadolint install failed"
+  fi
+}
+
+# dive: explore image layers and find wasted space. Release assets embed the
+# version in their filename, so resolve the latest tag via the GitHub API first.
+install_dive() {
+  command -v dive >/dev/null 2>&1 && { log "dive already present"; return; }
+  log "dive (image layer explorer)"
+  local ver
+  ver="$(curl -fsSL https://api.github.com/repos/wagoodman/dive/releases/latest \
+         | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')"
+  if [ -z "${ver}" ]; then
+    warn "dive install failed (could not resolve latest version)"; return
+  fi
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/dive.tar.gz" \
+       "https://github.com/wagoodman/dive/releases/download/v${ver}/dive_${ver}_linux_amd64.tar.gz" \
+     && tar -C "${tmp}" -xzf "${tmp}/dive.tar.gz" dive \
+     && [ -x "${tmp}/dive" ]; then
+    install -m 0755 "${tmp}/dive" /usr/local/bin/dive
+  else
+    warn "dive install failed"
+  fi
+  rm -rf "${tmp}"
+}
+
+# trivy: scan images, filesystems and Dockerfiles for vulnerabilities and
+# misconfigurations. Its installer pulls the matching release binary from GitHub.
+install_trivy() {
+  command -v trivy >/dev/null 2>&1 && { log "trivy already present"; return; }
+  log "trivy (image / Dockerfile security scanner)"
+  curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+    | sh -s -- -b /usr/local/bin \
+    || warn "trivy install failed"
+}
+
 # apt holds the dpkg lock, so run it to completion first, then fan out the
 # independent downloads in parallel and wait for all of them.
 install_apt
@@ -192,6 +246,10 @@ install_sproot &
 install_shuck &
 install_uv &
 install_bun &
+# Docker image development tools (all from GitHub, independent downloads).
+install_hadolint &
+install_dive &
+install_trivy &
 # garlic installs through cargo-binstall, so the two run in sequence (in
 # parallel with the rest of the fan-out).
 ( install_cargo_binstall; install_garlic ) &
