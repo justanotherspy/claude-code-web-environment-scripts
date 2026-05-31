@@ -171,6 +171,34 @@ install_go_tools() {
     || warn "staticcheck install failed"
 }
 
+# The Go tools this script installs land in /usr/local/bin (already on PATH),
+# but anything a user `go install`s in a later session goes to GOBIN, or
+# $GOPATH/bin when GOBIN is unset (default $HOME/go/bin) -- which is NOT on
+# PATH, so the freshly installed tool isn't found. Drop a /etc/profile.d
+# snippet (captured in the snapshot) that resolves the effective Go bin dir at
+# shell start and prepends it. Resolving at login (rather than baking an
+# absolute path here) keeps it correct whatever user/$HOME the session runs as.
+configure_go_path() {
+  log "Go PATH (surface GOBIN / GOPATH bin on PATH)"
+  cat > /etc/profile.d/go-path.sh <<'EOF'
+# Ensure `go install`ed tools (GOBIN, or $GOPATH/bin when GOBIN is unset) are
+# on PATH. Managed by the Claude Code on the web setup script.
+if command -v go >/dev/null 2>&1; then
+  _go_bin="$(go env GOBIN 2>/dev/null)"
+  [ -n "${_go_bin}" ] || _go_bin="$(go env GOPATH 2>/dev/null)/bin"
+  if [ -n "${_go_bin}" ]; then
+    case ":${PATH}:" in
+      *":${_go_bin}:"*) ;;
+      *) export PATH="${_go_bin}:${PATH}" ;;
+    esac
+  fi
+  unset _go_bin
+fi
+EOF
+  chmod 0644 /etc/profile.d/go-path.sh \
+    || warn "could not write /etc/profile.d/go-path.sh"
+}
+
 install_semgrep() {
   log "semgrep (PyPI)"
   python3 -m pip install --quiet --ignore-installed semgrep \
@@ -382,7 +410,7 @@ install_precommit &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.
-( install_go; install_go_tools ) &
+( install_go; install_go_tools; configure_go_path ) &
 wait
 
 log "done"
