@@ -86,6 +86,7 @@ On top of the pre-installed image, in parallel:
 | `gh`             | apt                                      | GitHub CLI (not pre-installed)                       |
 | `shellcheck`     | apt                                      | Shell linting                                        |
 | `unzip`          | apt                                      | Required by the `bun` installer                      |
+| `skopeo`         | apt                                      | Inspect/copy container images between registries     |
 | `semgrep`        | PyPI                                     | Static analysis                                      |
 | `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager — **needs non-default domains** |
 | `bun`            | `bun.sh/install`                         | JS runtime / package manager — **needs non-default domains**   |
@@ -102,6 +103,14 @@ On top of the pre-installed image, in parallel:
 | `hadolint`       | GitHub releases (`hadolint/hadolint`)    | Dockerfile linter (static binary)                    |
 | `dive`           | GitHub releases (`wagoodman/dive`)       | Inspect image layers / find wasted space             |
 | `trivy`          | GitHub (`aquasecurity/trivy` install.sh) | Scan images, filesystems & Dockerfiles for vulns/misconfigs |
+| `crane`          | GitHub releases (`google/go-containerregistry`) | Copy/inspect images, resolve tags to digests  |
+| `cosign`         | GitHub releases (`sigstore/cosign`)      | Sign / verify images & artifacts (static binary)     |
+| `syft`           | GitHub (`anchore/syft` install.sh)       | Generate SBOMs from images & filesystems             |
+| `goreleaser`     | GitHub releases (`goreleaser/goreleaser`) | Build & publish release artifacts                   |
+| `trufflehog`     | GitHub (`trufflesecurity/trufflehog` install.sh) | Scan for verified secrets                    |
+| `actionlint`     | GitHub releases (`rhysd/actionlint`)     | Lint GitHub Actions workflow files                   |
+| `zizmor`         | `cargo binstall zizmor` (crates.io + GitHub) | Static security analysis of GitHub Actions       |
+| `pre-commit`     | PyPI                                     | Git hook framework (drives `make hooks`)             |
 
 The base image already ships `cargo`/`rustc`, so the Rust step just adds
 `cargo-binstall`, which then installs any further cargo tools as prebuilt
@@ -122,12 +131,21 @@ in the setup logs) and the session still starts.
 The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
 (apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
-steps work out of the box: `gh`, `shellcheck`, `unzip`, `semgrep`, `sproot`,
-`shuck`, `cargo-binstall` (GitHub), `garlic` (`cargo binstall garlic-ward`, via
-crates.io + GitHub release assets), `golangci-lint` (`golangci-lint.run` is
-already listed below), the `go install` tools `goimports`/`staticcheck`
-(`proxy.golang.org`), and the Docker image tools `hadolint`, `dive` and `trivy`
-(all from GitHub release assets).
+steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
+`semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `cargo-binstall` (GitHub),
+`garlic` (`cargo binstall garlic-ward`) and `zizmor` (`cargo binstall zizmor`),
+both via crates.io + GitHub release assets, `golangci-lint` (`golangci-lint.run`
+is already listed below), the `go install` tools `goimports`/`staticcheck`
+(`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
+the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
+`trufflehog` and `actionlint` (all from GitHub release assets).
+
+> **Container registries (`cgr.dev` and friends).** The tools above can pull,
+> inspect and pin images at session time, but the Chainguard registry `cgr.dev`
+> is **not** on the Trusted list — anonymous pulls return `403 Forbidden` until
+> you add it to the Custom allowlist below. Add the registry host for whatever
+> registry you pull base images from (Docker Hub, GHCR and the like are covered
+> by the default package-manager list).
 
 Some steps download from hosts that are **not** on the Trusted list, so this
 environment uses **Custom** network access — *with the default package managers
@@ -172,6 +190,8 @@ golangci-lint.run
 go.dev
 crates.io
 *.crates.io
+cgr.dev
+*.cgr.dev
 ```
 
 Use `*.` for wildcard subdomains, and keep **“Also include default list of

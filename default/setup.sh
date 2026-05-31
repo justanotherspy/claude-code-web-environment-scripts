@@ -27,8 +27,15 @@
 # semgrep (PyPI), sproot, shuck (raw.githubusercontent.com + GitHub release
 # assets), cargo-binstall (GitHub), garlic (cargo binstall garlic-ward, from
 # crates.io + GitHub release assets), golangci-lint (golangci-lint.run + GitHub),
-# the `go install` tools (goimports, staticcheck via proxy.golang.org), and the
-# Docker image tools hadolint, dive and trivy (all from GitHub release assets).
+# the `go install` tools (goimports, staticcheck via proxy.golang.org), the
+# Docker image tools hadolint, dive and trivy (all from GitHub release assets),
+# skopeo (apt), the registry/supply-chain/CI tools crane, cosign, syft,
+# goreleaser, trufflehog and actionlint (GitHub release assets), zizmor (cargo
+# binstall, crates.io + GitHub), and pre-commit (PyPI).
+#
+# NOTE: pulling/pinning images from the Chainguard registry (cgr.dev) with the
+# tools above happens at session time, not here, but cgr.dev is NOT on the
+# Trusted list — add it to the Custom allowlist (see README) or those pulls 403.
 #
 # These steps fetch from hosts that are NOT on the Trusted list, so the
 # environment must use "Custom" network access with the default package
@@ -60,11 +67,12 @@ log()  { printf '\n=== setup: %s ===\n' "$*"; }
 warn() { printf 'setup: WARNING: %s\n' "$*" >&2; }
 
 install_apt() {
-  log "apt packages (gh, shellcheck, unzip)"
+  log "apt packages (gh, shellcheck, unzip, skopeo)"
   apt-get update || warn "apt-get update failed; continuing with cached lists"
-  # unzip is required by the bun installer (it ships a .zip).
-  apt-get install -y --no-install-recommends gh shellcheck unzip \
-    || warn "apt install failed (gh / shellcheck / unzip)"
+  # unzip is required by the bun installer (it ships a .zip). skopeo inspects
+  # and copies container images between registries (Ubuntu 24.04 ships it).
+  apt-get install -y --no-install-recommends gh shellcheck unzip skopeo \
+    || warn "apt install failed (gh / shellcheck / unzip / skopeo)"
 }
 
 install_uv() {
@@ -108,6 +116,19 @@ install_garlic() {
   # Surface it on the system PATH (cargo installs into $CARGO_HOME/bin).
   [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/garlic" ] \
     && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/garlic" /usr/local/bin/garlic
+}
+
+# zizmor (woodruffw/zizmor): static analysis for GitHub Actions workflows.
+# A Rust tool, so it installs as a prebuilt binary via cargo-binstall (crates.io
+# + GitHub release assets, both Trusted); runs after install_cargo_binstall.
+install_zizmor() {
+  command -v zizmor >/dev/null 2>&1 && { log "zizmor already present"; return; }
+  command -v cargo-binstall >/dev/null 2>&1 || { warn "cargo-binstall not found; skipping zizmor"; return; }
+  log "zizmor (GitHub Actions security auditor)"
+  cargo binstall -y zizmor \
+    || { warn "zizmor install failed"; return; }
+  [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/zizmor" ] \
+    && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/zizmor" /usr/local/bin/zizmor
 }
 
 # Replace the base image's Go with the pinned latest. go.dev/dl redirects the
@@ -235,6 +256,103 @@ install_trivy() {
     || warn "trivy install failed"
 }
 
+# --- Registry, supply-chain & CI workflow tooling -------------------------
+# Tools for inspecting/signing container images, generating SBOMs, cutting
+# releases, and linting/auditing CI. Every step here pulls from GitHub release
+# assets or githubusercontent (Trusted) or PyPI/crates.io — no extra allowlist
+# domains are needed beyond what the base steps already require. All use stable
+# /releases/latest/download asset names, so none of them hit api.github.com
+# (which is easily rate-limited and would 403 mid-build).
+
+# crane: copy/inspect images and resolve tags to digests, from Google's
+# go-containerregistry. The release tarball bundles crane/gcrane/krane; we
+# extract just crane. Asset name is version-independent, so latest/download works.
+install_crane() {
+  command -v crane >/dev/null 2>&1 && { log "crane already present"; return; }
+  log "crane (container registry client, go-containerregistry)"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/gcr.tar.gz" \
+       "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" \
+     && tar -C "${tmp}" -xzf "${tmp}/gcr.tar.gz" crane \
+     && [ -x "${tmp}/crane" ]; then
+    install -m 0755 "${tmp}/crane" /usr/local/bin/crane
+  else
+    warn "crane install failed"
+  fi
+  rm -rf "${tmp}"
+}
+
+# cosign: sign/verify container images and other artifacts (sigstore). Ships as
+# a single static binary under the stable latest/download path, like hadolint.
+install_cosign() {
+  command -v cosign >/dev/null 2>&1 && { log "cosign already present"; return; }
+  log "cosign (artifact signing, sigstore)"
+  if curl -fsSL -o /usr/local/bin/cosign \
+       "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"; then
+    chmod +x /usr/local/bin/cosign
+  else
+    warn "cosign install failed"
+  fi
+}
+
+# syft: generate SBOMs from images and filesystems (anchore). Its installer
+# pulls the matching release binary from GitHub, like trivy's.
+install_syft() {
+  command -v syft >/dev/null 2>&1 && { log "syft already present"; return; }
+  log "syft (SBOM generator, anchore)"
+  curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+    | sh -s -- -b /usr/local/bin \
+    || warn "syft install failed"
+}
+
+# goreleaser: build and publish release artifacts. The release tarball's asset
+# name is version-independent, so latest/download works (no API lookup).
+install_goreleaser() {
+  command -v goreleaser >/dev/null 2>&1 && { log "goreleaser already present"; return; }
+  log "goreleaser (release automation)"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/goreleaser.tar.gz" \
+       "https://github.com/goreleaser/goreleaser/releases/latest/download/goreleaser_Linux_x86_64.tar.gz" \
+     && tar -C "${tmp}" -xzf "${tmp}/goreleaser.tar.gz" goreleaser \
+     && [ -x "${tmp}/goreleaser" ]; then
+    install -m 0755 "${tmp}/goreleaser" /usr/local/bin/goreleaser
+  else
+    warn "goreleaser install failed"
+  fi
+  rm -rf "${tmp}"
+}
+
+# trufflehog: scan repos/filesystems for verified secrets. Installer pulls the
+# matching release binary from GitHub.
+install_trufflehog() {
+  command -v trufflehog >/dev/null 2>&1 && { log "trufflehog already present"; return; }
+  log "trufflehog (secret scanner)"
+  curl -fsSL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+    | sh -s -- -b /usr/local/bin \
+    || warn "trufflehog install failed"
+}
+
+# actionlint: lint GitHub Actions workflow files. Its download script grabs a
+# prebuilt binary (no Go build); args are [version] [target-dir].
+install_actionlint() {
+  command -v actionlint >/dev/null 2>&1 && { log "actionlint already present"; return; }
+  log "actionlint (GitHub Actions workflow linter)"
+  curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
+    | bash -s -- latest /usr/local/bin \
+    || warn "actionlint install failed"
+}
+
+# pre-commit: the git-hook framework many repos drive their lint/format checks
+# through (`make hooks`). Installed from PyPI, mirroring the semgrep step.
+install_precommit() {
+  command -v pre-commit >/dev/null 2>&1 && { log "pre-commit already present"; return; }
+  log "pre-commit (git hook framework, PyPI)"
+  python3 -m pip install --quiet --ignore-installed pre-commit \
+    || warn "pre-commit install failed"
+}
+
 # apt holds the dpkg lock, so run it to completion first, then fan out the
 # independent downloads in parallel and wait for all of them.
 install_apt
@@ -250,9 +368,17 @@ install_bun &
 install_hadolint &
 install_dive &
 install_trivy &
-# garlic installs through cargo-binstall, so the two run in sequence (in
-# parallel with the rest of the fan-out).
-( install_cargo_binstall; install_garlic ) &
+# Registry / supply-chain / CI tooling (all from GitHub, PyPI, independent).
+install_crane &
+install_cosign &
+install_syft &
+install_goreleaser &
+install_trufflehog &
+install_actionlint &
+install_precommit &
+# garlic and zizmor install through cargo-binstall, so they run in sequence
+# after it (in parallel with the rest of the fan-out).
+( install_cargo_binstall; install_garlic; install_zizmor ) &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.
