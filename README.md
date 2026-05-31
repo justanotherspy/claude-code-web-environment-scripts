@@ -157,6 +157,9 @@ logs a warning and is skipped:
 - `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
 - `sprite` → `sprites.dev` / `*.sprites.dev` / `sprites-binaries.t3.storage.dev`
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
+- `zizmor` docs → `zizmor.sh` / `*.zizmor.sh` (the `docs.zizmor.sh` audit
+  reference pages linked from each finding; the tool itself installs under
+  Trusted via crates.io + GitHub)
 
 Recommended **Custom** allowlist for this environment (one domain per line):
 
@@ -192,6 +195,8 @@ crates.io
 *.crates.io
 cgr.dev
 *.cgr.dev
+zizmor.sh
+*.zizmor.sh
 ```
 
 Use `*.` for wildcard subdomains, and keep **“Also include default list of
