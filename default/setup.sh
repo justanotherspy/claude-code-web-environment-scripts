@@ -27,7 +27,7 @@
 # semgrep (PyPI), sproot, shuck (raw.githubusercontent.com + GitHub release
 # assets), cargo-binstall (GitHub), garlic (cargo binstall garlic-ward, from
 # crates.io + GitHub release assets), golangci-lint (golangci-lint.run + GitHub),
-# the `go install` tools (goimports, staticcheck via proxy.golang.org), the
+# the `go install` tools (goimports, staticcheck, gopls via proxy.golang.org), the
 # Docker image tools hadolint, dive and trivy (all from GitHub release assets),
 # skopeo (apt), the registry/supply-chain/CI tools crane, cosign, syft,
 # goreleaser, trufflehog and actionlint (GitHub release assets), zizmor (cargo
@@ -158,10 +158,12 @@ install_go() {
 
 # Run AFTER install_go so the tools build with the upgraded toolchain. The
 # `go install` steps fetch through the Go module proxy (proxy.golang.org),
-# which the Trusted list already permits.
+# which the Trusted list already permits. Everything installs with
+# GOBIN=/usr/local/bin so the binaries are on PATH for every kind of session
+# shell (login, interactive, and plain `bash -c`).
 install_go_tools() {
   command -v go >/dev/null 2>&1 || { warn "go not found; skipping Go tools"; return; }
-  log "Go tools (golangci-lint, goimports, staticcheck)"
+  log "Go tools (golangci-lint, goimports, staticcheck, gopls)"
   curl -fsSL https://golangci-lint.run/install.sh \
     | sh -s -- -b /usr/local/bin \
     || warn "golangci-lint install failed"
@@ -169,6 +171,8 @@ install_go_tools() {
     || warn "goimports install failed"
   GOBIN=/usr/local/bin go install honnef.co/go/tools/cmd/staticcheck@latest \
     || warn "staticcheck install failed"
+  GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@latest \
+    || warn "gopls install failed"
 }
 
 # The Go tools this script installs land in /usr/local/bin (already on PATH),
@@ -178,6 +182,12 @@ install_go_tools() {
 # snippet (captured in the snapshot) that resolves the effective Go bin dir at
 # shell start and prepends it. Resolving at login (rather than baking an
 # absolute path here) keeps it correct whatever user/$HOME the session runs as.
+#
+# /etc/profile.d only covers *login* shells, but session shells are usually
+# non-login interactive bash (which reads /etc/bash.bashrc instead), so the
+# snippet is hooked into /etc/bash.bashrc too. Finally, any Go binaries already
+# sitting in the snapshot's GOBIN/GOPATH bin are symlinked into /usr/local/bin
+# so they resolve even from shells that read neither file (plain `bash -c`).
 configure_go_path() {
   log "Go PATH (surface GOBIN / GOPATH bin on PATH)"
   cat > /etc/profile.d/go-path.sh <<'EOF'
@@ -197,6 +207,35 @@ fi
 EOF
   chmod 0644 /etc/profile.d/go-path.sh \
     || warn "could not write /etc/profile.d/go-path.sh"
+
+  # Non-login interactive shells skip /etc/profile.d, so source the snippet
+  # from /etc/bash.bashrc as well. Prepend it ahead of Ubuntu's interactivity
+  # guard ([ -z "$PS1" ] && return) so even sourced non-interactive shells run
+  # it. Guarded by grep for idempotency across cache rebuilds.
+  if ! grep -q 'profile\.d/go-path\.sh' /etc/bash.bashrc 2>/dev/null; then
+    {
+      printf '%s\n' '[ -f /etc/profile.d/go-path.sh ] && . /etc/profile.d/go-path.sh' \
+        | cat - /etc/bash.bashrc > /etc/bash.bashrc.go-path \
+        && mv /etc/bash.bashrc.go-path /etc/bash.bashrc
+    } || warn "could not hook go-path.sh into /etc/bash.bashrc"
+  fi
+
+  # Symlink whatever is already in the effective Go bin dir (e.g. tools the
+  # base image pre-installed under ~/go/bin) into /usr/local/bin so they are
+  # found regardless of how the session shell was started. Existing names in
+  # /usr/local/bin are left alone.
+  command -v go >/dev/null 2>&1 || return 0
+  local go_bin
+  go_bin="$(go env GOBIN 2>/dev/null)"
+  [ -n "${go_bin}" ] || go_bin="$(go env GOPATH 2>/dev/null)/bin"
+  if [ -n "${go_bin}" ] && [ "${go_bin}" != "/bin" ] && [ -d "${go_bin}" ]; then
+    local tool
+    for tool in "${go_bin}"/*; do
+      [ -x "${tool}" ] && [ ! -e "/usr/local/bin/$(basename "${tool}")" ] \
+        && ln -s "${tool}" "/usr/local/bin/$(basename "${tool}")"
+    done
+  fi
+  return 0
 }
 
 install_semgrep() {
