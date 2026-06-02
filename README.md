@@ -94,6 +94,7 @@ On top of the pre-installed image, in parallel:
 | `golangci-lint`  | `golangci-lint.run/install.sh`           | Go linter (prebuilt binary)                          |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
+| `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
 | `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
 | `garlic`         | `cargo binstall garlic-ward` (crates.io + GitHub) | Tracks coding time and nudges breaks (justanotherspy/garlic) |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
@@ -111,6 +112,12 @@ On top of the pre-installed image, in parallel:
 | `actionlint`     | GitHub releases (`rhysd/actionlint`)     | Lint GitHub Actions workflow files                   |
 | `zizmor`         | `cargo binstall zizmor` (crates.io + GitHub) | Static security analysis of GitHub Actions       |
 | `pre-commit`     | PyPI                                     | Git hook framework (drives `make hooks`)             |
+
+All Go tools the script installs (`golangci-lint`, `goimports`, `staticcheck`,
+`gopls`) land in `/usr/local/bin`, which is on PATH for every kind of session
+shell. The script also writes `/etc/profile.d/go-path.sh` (and hooks it into
+`/etc/bash.bashrc`) so that anything `go install`ed *during* a session — which
+lands in `$GOBIN`, or `$GOPATH/bin` when unset — is on PATH too.
 
 The base image already ships `cargo`/`rustc`, so the Rust step just adds
 `cargo-binstall`, which then installs any further cargo tools as prebuilt
@@ -135,7 +142,7 @@ steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
 `semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `cargo-binstall` (GitHub),
 `garlic` (`cargo binstall garlic-ward`) and `zizmor` (`cargo binstall zizmor`),
 both via crates.io + GitHub release assets, `golangci-lint` (`golangci-lint.run`
-is already listed below), the `go install` tools `goimports`/`staticcheck`
+is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
 `trufflehog` and `actionlint` (all from GitHub release assets).
