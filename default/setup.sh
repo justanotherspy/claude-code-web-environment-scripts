@@ -61,7 +61,7 @@ export DEBIAN_FRONTEND=noninteractive
 # SPROOT_VERSION / SHUCK_VERSION (e.g. v0.3.5) in the environment variables;
 # both installers read them automatically. The Go toolchain is pinned here and
 # overridable with GO_VERSION (the base image ships an older Go).
-GO_VERSION="${GO_VERSION:-1.26.3}"
+GO_VERSION="${GO_VERSION:-1.26.4}"
 
 log()  { printf '\n=== setup: %s ===\n' "$*"; }
 warn() { printf 'setup: WARNING: %s\n' "$*" >&2; }
