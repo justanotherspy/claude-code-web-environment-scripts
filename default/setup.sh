@@ -30,8 +30,8 @@
 # the `go install` tools (goimports, staticcheck, gopls via proxy.golang.org), the
 # Docker image tools hadolint, dive and trivy (all from GitHub release assets),
 # skopeo (apt), the registry/supply-chain/CI tools crane, cosign, syft,
-# goreleaser, trufflehog and actionlint (GitHub release assets), zizmor (cargo
-# binstall, crates.io + GitHub), and pre-commit (PyPI).
+# goreleaser, trufflehog and actionlint (GitHub release assets), zizmor (GitHub
+# release asset), and pre-commit (PyPI).
 #
 # NOTE: pulling/pinning images from the Chainguard registry (cgr.dev) with the
 # tools above happens at session time, not here, but cgr.dev is NOT on the
@@ -129,17 +129,29 @@ install_garlic() {
   rm -rf "${tmp}"
 }
 
-# zizmor (woodruffw/zizmor): static analysis for GitHub Actions workflows.
-# A Rust tool, so it installs as a prebuilt binary via cargo-binstall (crates.io
-# + GitHub release assets, both Trusted); runs after install_cargo_binstall.
+# zizmor (zizmorcore/zizmor): static analysis for GitHub Actions workflows.
+# Pulls the prebuilt binary straight from the GitHub release (a cargo-dist
+# tarball; github.com release assets are on the Trusted list) -- faster and more
+# reliable than `cargo binstall`, which can fall back to a slow from-source
+# build. The asset name is version-independent, so latest/download resolves
+# without an api.github.com lookup; set ZIZMOR_VERSION (e.g. v1.25.2) to pin.
 install_zizmor() {
   command -v zizmor >/dev/null 2>&1 && { log "zizmor already present"; return; }
-  command -v cargo-binstall >/dev/null 2>&1 || { warn "cargo-binstall not found; skipping zizmor"; return; }
   log "zizmor (GitHub Actions security auditor)"
-  cargo binstall -y zizmor \
-    || { warn "zizmor install failed"; return; }
-  [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/zizmor" ] \
-    && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/zizmor" /usr/local/bin/zizmor
+  local base="https://github.com/zizmorcore/zizmor/releases"
+  local url="${base}/latest/download/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+  [ -n "${ZIZMOR_VERSION:-}" ] \
+    && url="${base}/download/${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/zizmor.tar.gz" "${url}" \
+     && tar -C "${tmp}" -xzf "${tmp}/zizmor.tar.gz" zizmor \
+     && [ -x "${tmp}/zizmor" ]; then
+    install -m 0755 "${tmp}/zizmor" /usr/local/bin/zizmor
+  else
+    warn "zizmor install failed"
+  fi
+  rm -rf "${tmp}"
 }
 
 # Replace the base image's Go with the pinned latest. go.dev/dl redirects the
@@ -454,11 +466,12 @@ install_syft &
 install_goreleaser &
 install_trufflehog &
 install_actionlint &
+install_zizmor &
 install_precommit &
-# zizmor installs through cargo-binstall, so it runs in sequence after it (in
-# parallel with the rest of the fan-out). garlic now pulls a prebuilt binary
-# straight from its GitHub release, so it joins the fan-out above instead.
-( install_cargo_binstall; install_zizmor ) &
+# cargo-binstall no longer has any in-script consumers (garlic and zizmor now
+# pull their binaries straight from GitHub releases), but we still install it so
+# sessions can `cargo binstall` further cargo tools as prebuilt binaries.
+install_cargo_binstall &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.

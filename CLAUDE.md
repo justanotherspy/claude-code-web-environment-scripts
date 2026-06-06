@@ -73,10 +73,10 @@ README's recommended allowlist — otherwise it will silently fail in the cloud.
 
 ## Versions
 
-`sproot`, `shuck`, and `garlic` track **latest** by default. The `sproot`/`shuck`
-installers and the `garlic` step read `SPROOT_VERSION` / `SHUCK_VERSION` /
-`GARLIC_VERSION` env vars (e.g. `v0.3.5`) for pinned, reproducible caches — set
-those in the environment, not in the script.
+`sproot`, `shuck`, `garlic`, and `zizmor` track **latest** by default. The
+`sproot`/`shuck` installers and the `garlic`/`zizmor` steps read `SPROOT_VERSION`
+/ `SHUCK_VERSION` / `GARLIC_VERSION` / `ZIZMOR_VERSION` env vars (e.g. `v0.3.5`)
+for pinned, reproducible caches — set those in the environment, not in the script.
 
 The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
 (default `1.26.3`, overridable from the environment). `uv`, `bun`,

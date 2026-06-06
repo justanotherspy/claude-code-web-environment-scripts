@@ -110,7 +110,7 @@ On top of the pre-installed image, in parallel:
 | `goreleaser`     | GitHub releases (`goreleaser/goreleaser`) | Build & publish release artifacts                   |
 | `trufflehog`     | GitHub (`trufflesecurity/trufflehog` install.sh) | Scan for verified secrets                    |
 | `actionlint`     | GitHub releases (`rhysd/actionlint`)     | Lint GitHub Actions workflow files                   |
-| `zizmor`         | `cargo binstall zizmor` (crates.io + GitHub) | Static security analysis of GitHub Actions       |
+| `zizmor`         | GitHub releases (`zizmorcore/zizmor`)    | Static security analysis of GitHub Actions (prebuilt binary) |
 | `pre-commit`     | PyPI                                     | Git hook framework (drives `make hooks`)             |
 
 All Go tools the script installs (`golangci-lint`, `goimports`, `staticcheck`,
@@ -125,9 +125,9 @@ binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
 compiling them.
 
 Versions track **latest** by default. To pin for fully reproducible caches, set
-`SPROOT_VERSION` / `SHUCK_VERSION` / `GARLIC_VERSION` (e.g. `v0.3.5`) as
-environment variables — the `sproot`/`shuck` installers and the `garlic` step
-read them automatically. The Go toolchain is pinned via
+`SPROOT_VERSION` / `SHUCK_VERSION` / `GARLIC_VERSION` / `ZIZMOR_VERSION` (e.g.
+`v0.3.5`) as environment variables — the `sproot`/`shuck` installers and the
+`garlic`/`zizmor` steps read them automatically. The Go toolchain is pinned via
 `GO_VERSION` (default `1.26.3`); set it to upgrade or roll back the installed
 Go.
 
@@ -140,9 +140,8 @@ The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
 (apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
 steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
-`semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `garlic` (all GitHub
-release assets), `cargo-binstall` and `zizmor` (`cargo binstall zizmor`, via
-crates.io + GitHub release assets), `golangci-lint` (`golangci-lint.run`
+`semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `garlic`, `zizmor` and
+`cargo-binstall` (all GitHub release assets), `golangci-lint` (`golangci-lint.run`
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
