@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Keep the pinned Go toolchain (GO_VERSION) in the setup script up to date",
+      "managerFilePatterns": ["default/setup.sh"],
+      "matchStrings": [
+        "GO_VERSION=\"\\$\\{GO_VERSION:-(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\}\""
+      ],
+      "datasourceTemplate": "golang-version",
+      "depNameTemplate": "go"
+    }
+  ]
+}

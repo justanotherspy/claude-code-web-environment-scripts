@@ -131,6 +131,20 @@ Versions track **latest** by default. To pin for fully reproducible caches, set
 `GO_VERSION` (default `1.26.3`); set it to upgrade or roll back the installed
 Go.
 
+### Keeping pinned versions current
+
+`GO_VERSION` is the only tool version hardcoded in the repo (everything else
+resolves to latest at build time, so it refreshes whenever the cache rebuilds).
+A [Renovate](https://docs.renovatebot.com) config (`renovate.json`) keeps it
+fresh: a custom manager watches the `GO_VERSION` line in `default/setup.sh` and
+opens a PR (via the `golang-version` datasource) whenever a new Go release ships,
+and Renovate's built-in `github-actions` manager keeps the action versions in
+`.github/workflows/` up to date. Updates require the free
+[Mend Renovate GitHub App](https://github.com/apps/renovate) to be installed on
+the repository; Renovate then runs on its own schedule and surfaces everything
+on a "Dependency Dashboard" issue. (Dependabot can't read a version out of a
+shell script, which is why this uses Renovate.)
+
 Failures are non-fatal: each step logs a `setup: WARNING: …` to stderr (visible
 in the setup logs) and the session still starts.
 

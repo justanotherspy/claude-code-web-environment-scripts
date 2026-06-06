@@ -82,6 +82,12 @@ The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
 (default `1.26.3`, overridable from the environment). `uv`, `bun`,
 `golangci-lint`, and the `go install` tools track latest.
 
+`GO_VERSION` is the only hardcoded tool version in the repo. `renovate.json`
+(Renovate App) keeps it current via a regex custom manager on `default/setup.sh`
+(`golang-version` datasource) and keeps the workflow action versions current via
+the built-in `github-actions` manager. If you add or rename a hardcoded version,
+update the custom manager's `matchStrings` to match, or Renovate won't see it.
+
 ## Debugging
 
 Set `SETUP_DEBUG=1` in the environment to run the script under `set -x`. A step
