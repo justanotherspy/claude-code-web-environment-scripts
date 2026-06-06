@@ -96,7 +96,7 @@ On top of the pre-installed image, in parallel:
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
 | `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
 | `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
-| `garlic`         | `cargo binstall garlic-ward` (crates.io + GitHub) | Tracks coding time and nudges breaks (justanotherspy/garlic) |
+| `garlic`         | GitHub releases (`justanotherspy/garlic`) | Tracks coding time and nudges breaks (prebuilt binary)       |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
 | `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
 | `sproot`         | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo     |
@@ -125,8 +125,9 @@ binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
 compiling them.
 
 Versions track **latest** by default. To pin for fully reproducible caches, set
-`SPROOT_VERSION` / `SHUCK_VERSION` (e.g. `v0.3.5`) as environment variables —
-both installers read them automatically. The Go toolchain is pinned via
+`SPROOT_VERSION` / `SHUCK_VERSION` / `GARLIC_VERSION` (e.g. `v0.3.5`) as
+environment variables — the `sproot`/`shuck` installers and the `garlic` step
+read them automatically. The Go toolchain is pinned via
 `GO_VERSION` (default `1.26.3`); set it to upgrade or roll back the installed
 Go.
 
@@ -139,9 +140,9 @@ The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
 (apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
 steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
-`semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `cargo-binstall` (GitHub),
-`garlic` (`cargo binstall garlic-ward`) and `zizmor` (`cargo binstall zizmor`),
-both via crates.io + GitHub release assets, `golangci-lint` (`golangci-lint.run`
+`semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `garlic` (all GitHub
+release assets), `cargo-binstall` and `zizmor` (`cargo binstall zizmor`, via
+crates.io + GitHub release assets), `golangci-lint` (`golangci-lint.run`
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,

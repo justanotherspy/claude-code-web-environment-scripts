@@ -58,8 +58,8 @@ the coupling is invisible from the code alone:
 
 - Under the default **Trusted** level these work (apt / PyPI / GitHub /
   githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
-  `semgrep`, `sproot`, `shuck`, `cargo-binstall`, `garlic` (`cargo binstall
-  garlic-ward`), `golangci-lint`, and the `go install` tools (`goimports`,
+  `semgrep`, `sproot`, `shuck`, `garlic` (prebuilt GitHub release binary),
+  `cargo-binstall`, `golangci-lint`, and the `go install` tools (`goimports`,
   `staticcheck`).
 - `uv` (`astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
   (`go.dev/dl` redirects to `dl.google.com`), `sprite`, and `flyctl` download
@@ -73,9 +73,10 @@ README's recommended allowlist — otherwise it will silently fail in the cloud.
 
 ## Versions
 
-`sproot` and `shuck` track **latest** by default. Their installers read
-`SPROOT_VERSION` / `SHUCK_VERSION` env vars (e.g. `v0.3.5`) for pinned,
-reproducible caches — set those in the environment, not in the script.
+`sproot`, `shuck`, and `garlic` track **latest** by default. The `sproot`/`shuck`
+installers and the `garlic` step read `SPROOT_VERSION` / `SHUCK_VERSION` /
+`GARLIC_VERSION` env vars (e.g. `v0.3.5`) for pinned, reproducible caches — set
+those in the environment, not in the script.
 
 The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
 (default `1.26.3`, overridable from the environment). `uv`, `bun`,

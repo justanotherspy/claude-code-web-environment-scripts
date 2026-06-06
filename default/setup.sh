@@ -25,8 +25,8 @@
 # (apt, PyPI, GitHub, crates.io, the Go module proxy, ...). These steps come
 # from Trusted hosts and work out of the box: gh, shellcheck, unzip (apt),
 # semgrep (PyPI), sproot, shuck (raw.githubusercontent.com + GitHub release
-# assets), cargo-binstall (GitHub), garlic (cargo binstall garlic-ward, from
-# crates.io + GitHub release assets), golangci-lint (golangci-lint.run + GitHub),
+# assets), cargo-binstall (GitHub), garlic (GitHub release asset),
+# golangci-lint (golangci-lint.run + GitHub),
 # the `go install` tools (goimports, staticcheck, gopls via proxy.golang.org), the
 # Docker image tools hadolint, dive and trivy (all from GitHub release assets),
 # skopeo (apt), the registry/supply-chain/CI tools crane, cosign, syft,
@@ -104,18 +104,29 @@ install_cargo_binstall() {
 }
 
 # garlic CLI (justanotherspy/garlic): tracks active coding time with Claude Code
-# and nudges breaks. Installed as a prebuilt binary via cargo-binstall, which
-# pulls the garlic-ward GitHub Release asset (crates.io + GitHub are both on the
-# Trusted list), so this runs after install_cargo_binstall, not in parallel.
+# and nudges breaks. Pulls the prebuilt binary straight from the GitHub release
+# (a cargo-dist tarball; github.com release assets are on the Trusted list) --
+# faster and more reliable than `cargo binstall`, which can fall back to a slow
+# from-source build. The asset name is version-independent, so latest/download
+# resolves without an api.github.com lookup; set GARLIC_VERSION (e.g. v0.3.3) to
+# pin a specific release.
 install_garlic() {
   command -v garlic >/dev/null 2>&1 && { log "garlic CLI already present"; return; }
-  command -v cargo-binstall >/dev/null 2>&1 || { warn "cargo-binstall not found; skipping garlic"; return; }
   log "garlic CLI (justanotherspy/garlic)"
-  cargo binstall -y garlic-ward \
-    || { warn "garlic install failed"; return; }
-  # Surface it on the system PATH (cargo installs into $CARGO_HOME/bin).
-  [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/garlic" ] \
-    && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/garlic" /usr/local/bin/garlic
+  local base="https://github.com/justanotherspy/garlic/releases"
+  local url="${base}/latest/download/garlic-x86_64-unknown-linux-gnu.tar.gz"
+  [ -n "${GARLIC_VERSION:-}" ] \
+    && url="${base}/download/${GARLIC_VERSION}/garlic-x86_64-unknown-linux-gnu.tar.gz"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/garlic.tar.gz" "${url}" \
+     && tar -C "${tmp}" -xzf "${tmp}/garlic.tar.gz" garlic \
+     && [ -x "${tmp}/garlic" ]; then
+    install -m 0755 "${tmp}/garlic" /usr/local/bin/garlic
+  else
+    warn "garlic install failed"
+  fi
+  rm -rf "${tmp}"
 }
 
 # zizmor (woodruffw/zizmor): static analysis for GitHub Actions workflows.
@@ -429,6 +440,7 @@ install_fly &
 install_sprite &
 install_sproot &
 install_shuck &
+install_garlic &
 install_uv &
 install_bun &
 # Docker image development tools (all from GitHub, independent downloads).
@@ -443,9 +455,10 @@ install_goreleaser &
 install_trufflehog &
 install_actionlint &
 install_precommit &
-# garlic and zizmor install through cargo-binstall, so they run in sequence
-# after it (in parallel with the rest of the fan-out).
-( install_cargo_binstall; install_garlic; install_zizmor ) &
+# zizmor installs through cargo-binstall, so it runs in sequence after it (in
+# parallel with the rest of the fan-out). garlic now pulls a prebuilt binary
+# straight from its GitHub release, so it joins the fan-out above instead.
+( install_cargo_binstall; install_zizmor ) &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.
