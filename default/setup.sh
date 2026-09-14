@@ -31,7 +31,8 @@
 # Docker image tools hadolint, dive and trivy (all from GitHub release assets),
 # skopeo (apt), the registry/supply-chain/CI tools crane, cosign, syft,
 # goreleaser, trufflehog and actionlint (GitHub release assets), zizmor (GitHub
-# release asset), and pre-commit (PyPI).
+# release asset), pre-commit (PyPI), and the Rust nightly toolchain
+# (static.rust-lang.org).
 #
 # NOTE: pulling/pinning images from the Chainguard registry (cgr.dev) with the
 # tools above happens at session time, not here, but cgr.dev is NOT on the
@@ -45,6 +46,7 @@
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
 #     sprite CLI  -> sprites.dev / *.sprites.dev / sprites-binaries.t3.storage.dev
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
+#     nextest     -> get.nexte.st
 # Without them, the matching steps below log a warning and are skipped.
 # See the "Network access" section of README.md for the full recommended
 # allowlist used by this environment.
@@ -89,6 +91,50 @@ install_bun() {
   curl -fsSL https://bun.sh/install \
     | env BUN_INSTALL=/usr/local bash \
     || warn "bun install failed (is bun.sh on the allowlist, and is unzip present?)"
+}
+
+# Rust nightly toolchain. The base image ships a stable rustc/cargo through
+# rustup, but not nightly -- and repos that pin `channel = "nightly"` in
+# rust-toolchain.toml (garnish) need it plus rustfmt/clippy/rust-analyzer/
+# rust-src before anything builds. Without this, every session pays the
+# download on its first cargo command; baking it into the snapshot costs ~20s
+# once. rustup.rs and static.rust-lang.org are both on the Trusted list, so no
+# allowlist changes are needed.
+#
+# `stable` stays the default toolchain: a rust-toolchain.toml selects nightly
+# per-directory, so only repos that ask for it get it. Nightly moves daily and
+# the snapshot is rebuilt roughly weekly, so the baked toolchain can be a few
+# days behind -- `rustup update nightly` in-session refreshes it.
+install_rust_nightly() {
+  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust nightly"; return; }
+  if rustup toolchain list 2>/dev/null | grep -q '^nightly-'; then
+    log "Rust nightly already present"; return
+  fi
+  log "Rust nightly toolchain (rustfmt, clippy, rust-analyzer, rust-src)"
+  rustup toolchain install nightly --profile minimal --no-self-update \
+    -c rustfmt -c clippy -c rust-analyzer -c rust-src \
+    || warn "Rust nightly install failed"
+}
+
+# cargo-nextest: the test runner garnish's `make check` / `make test` drive
+# (it groups the serial tests `cargo test` cannot). Pulled as a prebuilt
+# binary from get.nexte.st, which redirects to the GitHub release asset --
+# `cargo binstall cargo-nextest` falls back to a 3+ minute from-source build
+# here, which does not fit the setup budget. get.nexte.st is NOT on the
+# Trusted list; add it to the Custom allowlist (see README).
+install_cargo_nextest() {
+  command -v cargo-nextest >/dev/null 2>&1 && { log "cargo-nextest already present"; return; }
+  log "cargo-nextest (Rust test runner)"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/nextest.tar.gz" "https://get.nexte.st/latest/linux" \
+     && tar -C "${tmp}" -xzf "${tmp}/nextest.tar.gz" cargo-nextest \
+     && [ -x "${tmp}/cargo-nextest" ]; then
+    install -m 0755 "${tmp}/cargo-nextest" /usr/local/bin/cargo-nextest
+  else
+    warn "cargo-nextest install failed (is get.nexte.st on the allowlist?)"
+  fi
+  rm -rf "${tmp}"
 }
 
 install_cargo_binstall() {
@@ -190,12 +236,17 @@ install_go_tools() {
   curl -fsSL https://golangci-lint.run/install.sh \
     | sh -s -- -b /usr/local/bin \
     || warn "golangci-lint install failed"
+  # The three `go install`s run concurrently: gopls is a large build and,
+  # queued behind the other two, it has run past the ~5 minute budget before
+  # (it was missing from the snapshot while goimports and staticcheck landed).
+  # Go's build and module caches are concurrency-safe, so they can share them.
   GOBIN=/usr/local/bin go install golang.org/x/tools/cmd/goimports@latest \
-    || warn "goimports install failed"
+    || warn "goimports install failed" &
   GOBIN=/usr/local/bin go install honnef.co/go/tools/cmd/staticcheck@latest \
-    || warn "staticcheck install failed"
+    || warn "staticcheck install failed" &
   GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@latest \
-    || warn "gopls install failed"
+    || warn "gopls install failed" &
+  wait
 }
 
 # The Go tools this script installs land in /usr/local/bin (already on PATH),
@@ -313,13 +364,18 @@ install_hadolint() {
 }
 
 # dive: explore image layers and find wasted space. Release assets embed the
-# version in their filename, so resolve the latest tag via the GitHub API first.
+# version in their filename, so the latest tag has to be resolved first. We read
+# it from the redirect github.com/<repo>/releases/latest issues to the tag page,
+# NOT from api.github.com: the API is rate-limited per IP for unauthenticated
+# callers and 403s mid-build (which is why dive was the one tool missing from
+# the snapshot while every /releases/latest/download step succeeded).
 install_dive() {
   command -v dive >/dev/null 2>&1 && { log "dive already present"; return; }
   log "dive (image layer explorer)"
   local ver
-  ver="$(curl -fsSL https://api.github.com/repos/wagoodman/dive/releases/latest \
-         | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')"
+  ver="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+         https://github.com/wagoodman/dive/releases/latest \
+         | sed -nE 's#.*/releases/tag/v?([^/]+)$#\1#p')"
   if [ -z "${ver}" ]; then
     warn "dive install failed (could not resolve latest version)"; return
   fi
@@ -468,10 +524,13 @@ install_trufflehog &
 install_actionlint &
 install_zizmor &
 install_precommit &
+install_cargo_nextest &
 # cargo-binstall no longer has any in-script consumers (garlic and zizmor now
 # pull their binaries straight from GitHub releases), but we still install it so
 # sessions can `cargo binstall` further cargo tools as prebuilt binaries.
 install_cargo_binstall &
+# Rust nightly (rust-toolchain.toml repos) alongside the image's stable.
+install_rust_nightly &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.

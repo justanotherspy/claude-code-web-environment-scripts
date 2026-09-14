@@ -35,10 +35,14 @@ guidance on how to write good ones.
   non-critical steps from aborting the whole script (this repo's script logs a
   warning and continues instead).
 
-The cloud image already ships common runtimes and tools (Python, Node 20–22,
-Ruby, Go, Rust, Java, PHP, Docker, Postgres 16, Redis 7, `git`, `jq`, `ripgrep`,
-`pytest`/`jest`/`cargo`, …). **Only install what the image lacks.** Run
-`check-tools` in a cloud session for the exact list.
+The cloud image already ships common runtimes and tools — Python 3 (with `pip`,
+`poetry`, `uv`, `black`, `mypy`, `pytest`, `ruff`), Node 20/21/22 (with `npm`,
+`yarn`, `pnpm`, `bun`, `eslint`, `prettier`), Ruby, Go, Rust (stable `rustc` and
+`cargo` via `rustup`), Java, PHP, C/C++, Docker, Postgres 16, Redis 7, and
+`git`, `gh`, `jq`, `yq`, `ripgrep`, `tmux`. **Only install what the image
+lacks.** Run `check-tools` in a cloud session for the exact list, and see
+[Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)
+for the current inventory.
 
 ## Setup scripts vs. SessionStart hooks
 
@@ -83,19 +87,21 @@ On top of the pre-installed image, in parallel:
 
 | Tool             | Source                                   | Notes                                                |
 | ---------------- | ---------------------------------------- | ---------------------------------------------------- |
-| `gh`             | apt                                      | GitHub CLI (not pre-installed)                       |
+| `gh`             | apt                                      | GitHub CLI; the docs now list it as pre-installed, so this is a safety net |
 | `shellcheck`     | apt                                      | Shell linting                                        |
 | `unzip`          | apt                                      | Required by the `bun` installer                      |
 | `skopeo`         | apt                                      | Inspect/copy container images between registries     |
 | `semgrep`        | PyPI                                     | Static analysis                                      |
-| `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager — **needs non-default domains** |
-| `bun`            | `bun.sh/install`                         | JS runtime / package manager — **needs non-default domains**   |
+| `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
+| `bun`            | `bun.sh/install`                         | JS runtime / package manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
 | `golangci-lint`  | `golangci-lint.run/install.sh`           | Go linter (prebuilt binary)                          |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
 | `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
 | `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
+| Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Toolchain for `rust-toolchain.toml` repos, with rustfmt/clippy/rust-analyzer/rust-src |
+| `cargo-nextest`  | `get.nexte.st`                           | Rust test runner (`make check`/`make test`) — **needs non-default domains** |
 | `garlic`         | GitHub releases (`justanotherspy/garlic`) | Tracks coding time and nudges breaks (prebuilt binary)       |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
 | `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
@@ -119,17 +125,30 @@ shell. The script also writes `/etc/profile.d/go-path.sh` (and hooks it into
 `/etc/bash.bashrc`) so that anything `go install`ed *during* a session — which
 lands in `$GOBIN`, or `$GOPATH/bin` when unset — is on PATH too.
 
-The base image already ships `cargo`/`rustc`, so the Rust step just adds
-`cargo-binstall`, which then installs any further cargo tools as prebuilt
-binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
-compiling them.
+The base image already ships a **stable** `cargo`/`rustc` through `rustup`, but
+no nightly toolchain, so a repo that pins `channel = "nightly"` in its
+`rust-toolchain.toml` would download one on its first `cargo` command in every
+session. The script installs `nightly` (with `rustfmt`, `clippy`,
+`rust-analyzer` and `rust-src`) into the snapshot instead — about 15 seconds,
+paid once. `stable` stays the **default** toolchain, so nightly is used only
+where a `rust-toolchain.toml` asks for it. Nightly moves daily and the snapshot
+is rebuilt roughly weekly, so the baked toolchain can be a few days behind; run
+`rustup update nightly` in-session for the newest.
+
+The script also adds `cargo-nextest` (the test runner `make check` / `make test`
+drive in these repos) as a prebuilt binary, and `cargo-binstall`, which then
+installs any further cargo tools as prebuilt binaries in seconds (e.g.
+`cargo binstall cargo-edit cargo-watch`) instead of compiling them. Note that
+`cargo binstall cargo-nextest` itself falls back to a 3-minute from-source
+build, which is why nextest comes straight from `get.nexte.st`.
 
 Versions track **latest** by default. To pin for fully reproducible caches, set
 `SPROOT_VERSION` / `SHUCK_VERSION` / `GARLIC_VERSION` / `ZIZMOR_VERSION` (e.g.
 `v0.3.5`) as environment variables — the `sproot`/`shuck` installers and the
 `garlic`/`zizmor` steps read them automatically. The Go toolchain is pinned via
-`GO_VERSION` (default `1.26.3`); set it to upgrade or roll back the installed
-Go.
+`GO_VERSION` (default `1.27.1`, the current release); set it to upgrade or roll
+back the installed Go. Rust `nightly` and `cargo-nextest` track latest and are
+not pinnable from the environment.
 
 ### Keeping pinned versions current
 
@@ -159,7 +178,17 @@ steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
-`trufflehog` and `actionlint` (all from GitHub release assets).
+`trufflehog` and `actionlint` (all from GitHub release assets), and the Rust
+`nightly` toolchain (`rustup.rs` and `static.rust-lang.org` are both on the
+Trusted list).
+
+> **Avoid `api.github.com` in the script.** It *is* on the Trusted list, but
+> unauthenticated calls are rate-limited per IP and shared build IPs hit the
+> limit, so a step that resolves a version through the API 403s intermittently
+> and drops that tool from the snapshot — which is exactly what happened to
+> `dive`. Prefer a stable `/releases/latest/download/<asset>` URL; when the
+> asset name embeds the version, read the tag from the redirect that
+> `github.com/<owner>/<repo>/releases/latest` issues instead.
 
 > **Container registries (`cgr.dev` and friends).** The tools above can pull,
 > inspect and pin images at session time, but the Chainguard registry `cgr.dev`
@@ -178,6 +207,8 @@ logs a warning and is skipped:
 - `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
 - `sprite` → `sprites.dev` / `*.sprites.dev` / `sprites-binaries.t3.storage.dev`
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
+- `cargo-nextest` → `get.nexte.st` (it redirects to the GitHub release asset,
+  which `*.githubusercontent.com` already covers)
 - `zizmor` docs → `zizmor.sh` / `*.zizmor.sh` (the `docs.zizmor.sh` audit
   reference pages linked from each finding; the tool itself installs under
   Trusted via crates.io + GitHub)
@@ -207,6 +238,7 @@ astral.sh
 bun.sh
 *.bun.sh
 dl.google.com
+get.nexte.st
 golangci-lint.run
 *.blob.core.windows.net
 *.githubusercontent.com
