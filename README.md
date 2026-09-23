@@ -87,15 +87,15 @@ On top of the pre-installed image, in parallel:
 
 | Tool             | Source                                   | Notes                                                |
 | ---------------- | ---------------------------------------- | ---------------------------------------------------- |
-| `gh`             | apt                                      | GitHub CLI; the docs now list it as pre-installed, so this is a safety net |
-| `shellcheck`     | apt                                      | Shell linting                                        |
+| `gh`             | apt                                      | GitHub CLI; pre-installed, so only fetched if the image drops it |
+| `shellcheck`     | apt                                      | Shell linting; only fetched if missing               |
 | `unzip`          | apt                                      | Required by the `bun` installer                      |
 | `skopeo`         | apt                                      | Inspect/copy container images between registries     |
-| `semgrep`        | PyPI                                     | Static analysis                                      |
+| `semgrep`        | PyPI (`uv tool install`)                 | Static analysis, in its own virtualenv               |
 | `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
 | `bun`            | `bun.sh/install`                         | JS runtime / package manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
-| `golangci-lint`  | `golangci-lint.run/install.sh`           | Go linter (prebuilt binary)                          |
+| `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
 | `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
@@ -117,7 +117,7 @@ On top of the pre-installed image, in parallel:
 | `trufflehog`     | GitHub (`trufflesecurity/trufflehog` install.sh) | Scan for verified secrets                    |
 | `actionlint`     | GitHub releases (`rhysd/actionlint`)     | Lint GitHub Actions workflow files                   |
 | `zizmor`         | GitHub releases (`zizmorcore/zizmor`)    | Static security analysis of GitHub Actions (prebuilt binary) |
-| `pre-commit`     | PyPI                                     | Git hook framework (drives `make hooks`)             |
+| `pre-commit`     | PyPI (`uv tool install`)                 | Git hook framework (drives `make hooks`), in its own virtualenv |
 
 All Go tools the script installs (`golangci-lint`, `goimports`, `staticcheck`,
 `gopls`) land in `/usr/local/bin`, which is on PATH for every kind of session
@@ -165,9 +165,29 @@ on a "Dependency Dashboard" issue. (Dependabot can't read a version out of a
 shell script, which is why this uses Renovate.)
 
 Failures are non-fatal: each step logs a `setup: WARNING: …` to stderr (visible
-in the setup logs) and the session still starts.
+in the setup logs) and the session still starts. At the end, the script logs one
+`setup: WARNING: missing after setup: …` line listing any tool that didn't land
+in the snapshot, then how long the run took. It always exits 0.
+
+Every download in the script goes through a `curl` wrapper with a connect
+timeout, a 180-second transfer cap and two retries, so one stalled host can't
+push the run past the ~5-minute cache budget. Third-party installers piped to
+`sh` (trivy, syft, trufflehog, actionlint, sproot, shuck, bun, uv, flyctl,
+sprite) make their own curl calls and aren't covered.
+
+`semgrep` and `pre-commit` install with `uv tool install`, which gives each one
+its own virtualenv under `/opt/uv-tools` and links it into `/usr/local/bin`.
+Their pinned dependencies stay out of the shared `site-packages`, where
+`pip install --ignore-installed` could quietly downgrade packages a project
+uses. If `uv` is missing, the script falls back to pip.
 
 ## Network access
+
+**This environment uses Full network access**, so every step can reach its
+download host and no allowlist needs maintaining. Changing the access level or
+the allowed hosts rebuilds the cache, so the next session after the switch
+re-runs the script. The rest of this section applies only if you move the
+environment back to **Trusted** or **Custom**.
 
 The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
@@ -182,13 +202,16 @@ the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
 `nightly` toolchain (`rustup.rs` and `static.rust-lang.org` are both on the
 Trusted list).
 
-> **Avoid `api.github.com` in the script.** It *is* on the Trusted list, but
-> unauthenticated calls are rate-limited per IP and shared build IPs hit the
-> limit, so a step that resolves a version through the API 403s intermittently
-> and drops that tool from the snapshot — which is exactly what happened to
-> `dive`. Prefer a stable `/releases/latest/download/<asset>` URL; when the
-> asset name embeds the version, read the tag from the redirect that
-> `github.com/<owner>/<repo>/releases/latest` issues instead.
+> **Avoid `api.github.com` in the script, even under Full access.** It *is* on
+> the Trusted list, but unauthenticated calls are rate-limited per IP and shared
+> build IPs hit the limit, so a step that resolves a version through the API
+> 403s intermittently and drops that tool from the snapshot — which is exactly
+> what happened to `dive`. Prefer a stable `/releases/latest/download/<asset>`
+> URL. When the asset name embeds the version, read the tag from the redirect
+> that `github.com/<owner>/<repo>/releases/latest` issues, or, for Go projects,
+> from the Go module proxy (`proxy.golang.org/<module>/@latest`), which isn't
+> rate-limited. `dive` tries the redirect and falls back to the proxy;
+> `golangci-lint` goes straight to the proxy.
 
 > **Container registries (`cgr.dev` and friends).** The tools above can pull,
 > inspect and pin images at session time, but the Chainguard registry `cgr.dev`
@@ -265,8 +288,9 @@ this repo is the source of truth for the script's contents. To apply it:
    **Add environment** or edit an existing one.
 2. Paste the contents of [`default/setup.sh`](default/setup.sh) into the
    **Setup script** field.
-3. Set **Network access** to **Custom** and add the
-   [allowlist above](#network-access) (keep default package managers enabled).
+3. Set **Network access** to **Full** (what this environment uses). To lock
+   it down instead, pick **Custom** and add the
+   [allowlist above](#network-access), keeping default package managers enabled.
 4. Optionally add environment variables (`.env` format, one `KEY=value` per
    line, no quotes), e.g. `GH_TOKEN`, `SPROOT_VERSION`, `SETUP_DEBUG=1`.
 
