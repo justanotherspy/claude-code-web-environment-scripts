@@ -19,37 +19,27 @@
 # Docs: https://code.claude.com/docs/en/claude-code-on-the-web#setup-scripts
 #
 # ---------------------------------------------------------------------------
-# NETWORK ACCESS REQUIRED
+# NETWORK ACCESS
 # ---------------------------------------------------------------------------
-# The default "Trusted" level only allows the bundled package registries
-# (apt, PyPI, GitHub, crates.io, the Go module proxy, ...). These steps come
-# from Trusted hosts and work out of the box: gh, shellcheck, unzip (apt),
-# semgrep (PyPI), sproot, shuck (raw.githubusercontent.com + GitHub release
-# assets), cargo-binstall (GitHub), garlic (GitHub release asset),
-# golangci-lint (golangci-lint.run + GitHub),
-# the `go install` tools (goimports, staticcheck, gopls via proxy.golang.org), the
-# Docker image tools hadolint, dive and trivy (all from GitHub release assets),
-# skopeo (apt), the registry/supply-chain/CI tools crane, cosign, syft,
-# goreleaser, trufflehog and actionlint (GitHub release assets), zizmor (GitHub
-# release asset), pre-commit (PyPI), and the Rust nightly toolchain
-# (static.rust-lang.org).
+# This environment uses "Full" network access, so every step below can reach
+# its download host. Changing the access level (or the allowed hosts) rebuilds
+# the cache, so switching to Full already re-runs this script.
 #
-# NOTE: pulling/pinning images from the Chainguard registry (cgr.dev) with the
-# tools above happens at session time, not here, but cgr.dev is NOT on the
-# Trusted list — add it to the Custom allowlist (see README) or those pulls 403.
-#
-# These steps fetch from hosts that are NOT on the Trusted list, so the
-# environment must use "Custom" network access with the default package
-# managers enabled PLUS at minimum these domains added:
+# If you move the environment back to "Trusted", these steps still work
+# (apt, PyPI, GitHub, githubusercontent, crates.io, the Go module proxy,
+# static.rust-lang.org): gh, shellcheck, unzip, skopeo, semgrep, pre-commit,
+# sproot, shuck, garlic, zizmor, cargo-binstall, golangci-lint, goimports,
+# staticcheck, gopls, hadolint, dive, trivy, crane, cosign, syft, goreleaser,
+# trufflehog, actionlint and the Rust nightly toolchain. These fetch from hosts
+# NOT on the Trusted list and need "Custom" access (default package managers
+# enabled) plus the README's allowlist:
 #     uv          -> astral.sh / *.astral.sh
 #     bun         -> bun.sh / *.bun.sh
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
 #     sprite CLI  -> sprites.dev / *.sprites.dev / sprites-binaries.t3.storage.dev
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
 #     nextest     -> get.nexte.st
-# Without them, the matching steps below log a warning and are skipped.
-# See the "Network access" section of README.md for the full recommended
-# allowlist used by this environment.
+# Without them, the matching step logs a warning and is skipped.
 # ---------------------------------------------------------------------------
 
 set -uo pipefail
@@ -58,6 +48,18 @@ set -uo pipefail
 [ "${SETUP_DEBUG:-0}" = "1" ] && set -x
 
 export DEBIAN_FRONTEND=noninteractive
+
+# The image keeps rustup/cargo in ~/.cargo/bin and uv in ~/.local/bin. Make
+# sure both are on PATH for this script however it was launched, so the
+# `command -v` guards below find them.
+for _dir in "${HOME}/.cargo/bin" "${HOME}/.local/bin"; do
+  case ":${PATH}:" in
+    *":${_dir}:"*) ;;
+    *) [ -d "${_dir}" ] && PATH="${_dir}:${PATH}" ;;
+  esac
+done
+unset _dir
+export PATH
 
 # Versions track latest by default. To pin for fully reproducible caches, set
 # SPROOT_VERSION / SHUCK_VERSION (e.g. v0.3.5) in the environment variables;
@@ -68,13 +70,33 @@ GO_VERSION="${GO_VERSION:-1.27.1}"
 log()  { printf '\n=== setup: %s ===\n' "$*"; }
 warn() { printf 'setup: WARNING: %s\n' "$*" >&2; }
 
+# Every download in this script goes through this wrapper, so a stalled host
+# can't hang a step past the ~5 minute cache budget: connections time out,
+# transfers are capped, and transient failures (including timeouts) retry.
+# Third-party installers piped to `sh` below use their own curl calls and are
+# not covered.
+curl() {
+  command curl --connect-timeout 15 --max-time 180 \
+    --retry 2 --retry-delay 2 "$@"
+}
+
+# Install the apt packages the image lacks. gh and shellcheck ship in the
+# current image, so normally only skopeo is fetched; each is still listed in
+# case the image drops it. unzip is required by the bun installer (it ships a
+# .zip). skopeo inspects and copies container images between registries.
 install_apt() {
-  log "apt packages (gh, shellcheck, unzip, skopeo)"
+  local want=(gh:gh shellcheck:shellcheck unzip:unzip skopeo:skopeo)
+  local pkgs=() entry
+  for entry in "${want[@]}"; do
+    command -v "${entry%%:*}" >/dev/null 2>&1 || pkgs+=("${entry#*:}")
+  done
+  if [ "${#pkgs[@]}" -eq 0 ]; then
+    log "apt packages already present"; return
+  fi
+  log "apt packages (${pkgs[*]})"
   apt-get update || warn "apt-get update failed; continuing with cached lists"
-  # unzip is required by the bun installer (it ships a .zip). skopeo inspects
-  # and copies container images between registries (Ubuntu 24.04 ships it).
-  apt-get install -y --no-install-recommends gh shellcheck unzip skopeo \
-    || warn "apt install failed (gh / shellcheck / unzip / skopeo)"
+  apt-get install -y --no-install-recommends "${pkgs[@]}" \
+    || warn "apt install failed (${pkgs[*]})"
 }
 
 install_uv() {
@@ -225,6 +247,32 @@ install_go() {
   rm -rf "${tmp}"
 }
 
+# golangci-lint: prebuilt release binary. Its official installer scrapes
+# GitHub's releases pages to resolve a tag, and those pages 403 on shared build
+# IPs the same way api.github.com does. So the tag comes from the Go module
+# proxy (Trusted, not rate-limited) and the tarball straight from the release
+# asset URL. If either step fails, fall back to the official installer.
+install_golangci_lint() {
+  command -v golangci-lint >/dev/null 2>&1 && { log "golangci-lint already present"; return; }
+  log "golangci-lint (Go linter)"
+  local ver tmp
+  ver="$(curl -fsSL https://proxy.golang.org/github.com/golangci/golangci-lint/v2/@latest          | sed -nE 's#.*"Version":"v([^"]+)".*#\1#p')"
+  tmp="$(mktemp -d)"
+  local name="golangci-lint-${ver}-linux-amd64"
+  if [ -n "${ver}" ] \
+     && curl -fsSL -o "${tmp}/gl.tar.gz" \
+          "https://github.com/golangci/golangci-lint/releases/download/v${ver}/${name}.tar.gz" \
+     && tar -C "${tmp}" -xzf "${tmp}/gl.tar.gz" "${name}/golangci-lint" \
+     && [ -x "${tmp}/${name}/golangci-lint" ]; then
+    install -m 0755 "${tmp}/${name}/golangci-lint" /usr/local/bin/golangci-lint
+  else
+    curl -fsSL https://golangci-lint.run/install.sh \
+      | sh -s -- -b /usr/local/bin \
+      || warn "golangci-lint install failed"
+  fi
+  rm -rf "${tmp}"
+}
+
 # Run AFTER install_go so the tools build with the upgraded toolchain. The
 # `go install` steps fetch through the Go module proxy (proxy.golang.org),
 # which the Trusted list already permits. Everything installs with
@@ -232,10 +280,7 @@ install_go() {
 # shell (login, interactive, and plain `bash -c`).
 install_go_tools() {
   command -v go >/dev/null 2>&1 || { warn "go not found; skipping Go tools"; return; }
-  log "Go tools (golangci-lint, goimports, staticcheck, gopls)"
-  curl -fsSL https://golangci-lint.run/install.sh \
-    | sh -s -- -b /usr/local/bin \
-    || warn "golangci-lint install failed"
+  log "Go tools (goimports, staticcheck, gopls)"
   # The three `go install`s run concurrently: gopls is a large build and,
   # queued behind the other two, it has run past the ~5 minute budget before
   # (it was missing from the snapshot while goimports and staticcheck landed).
@@ -312,10 +357,27 @@ EOF
   return 0
 }
 
+# Python CLI tools install with `uv tool install`, which gives each tool its
+# own virtualenv under /opt/uv-tools and links the entry point into
+# /usr/local/bin. That keeps their pinned dependencies (semgrep pins many) out
+# of the shared site-packages, where `pip install --ignore-installed` could
+# silently downgrade packages a project relies on. pip is the fallback if the
+# image ever drops uv. Both fetch from PyPI (Trusted).
+install_python_tool() {
+  local tool="$1"
+  if command -v uv >/dev/null 2>&1; then
+    UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+      uv tool install --quiet --force "${tool}" \
+      || warn "${tool} install failed"
+  else
+    python3 -m pip install --quiet --ignore-installed "${tool}" \
+      || warn "${tool} install failed"
+  fi
+}
+
 install_semgrep() {
   log "semgrep (PyPI)"
-  python3 -m pip install --quiet --ignore-installed semgrep \
-    || warn "semgrep install failed"
+  install_python_tool semgrep
 }
 
 install_fly() {
@@ -347,7 +409,7 @@ install_shuck() {
 # --- Docker image development tooling -------------------------------------
 # Docker itself ships in the base image; these add the tools for *authoring*
 # and inspecting images. All three pull prebuilt binaries from GitHub release
-# assets (api.github.com + github.com + *.githubusercontent.com), which the
+# assets (github.com + *.githubusercontent.com), which the
 # Trusted network level already permits — no extra allowlist domains needed.
 
 # hadolint: Dockerfile linter. Ships as a single static binary whose asset name
@@ -376,6 +438,11 @@ install_dive() {
   ver="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
          https://github.com/wagoodman/dive/releases/latest \
          | sed -nE 's#.*/releases/tag/v?([^/]+)$#\1#p')"
+  # Fallback: dive is a Go module, so the Go module proxy (Trusted, not
+  # rate-limited) also knows its latest tag.
+  [ -n "${ver}" ] || ver="$(curl -fsSL \
+         https://proxy.golang.org/github.com/wagoodman/dive/@latest \
+         | sed -nE 's#.*"Version":"v?([^"]+)".*#\1#p')"
   if [ -z "${ver}" ]; then
     warn "dive install failed (could not resolve latest version)"; return
   fi
@@ -495,8 +562,7 @@ install_actionlint() {
 install_precommit() {
   command -v pre-commit >/dev/null 2>&1 && { log "pre-commit already present"; return; }
   log "pre-commit (git hook framework, PyPI)"
-  python3 -m pip install --quiet --ignore-installed pre-commit \
-    || warn "pre-commit install failed"
+  install_python_tool pre-commit
 }
 
 # apt holds the dpkg lock, so run it to completion first, then fan out the
@@ -522,6 +588,7 @@ install_syft &
 install_goreleaser &
 install_trufflehog &
 install_actionlint &
+install_golangci_lint &
 install_zizmor &
 install_precommit &
 install_cargo_nextest &
@@ -537,4 +604,21 @@ install_rust_nightly &
 ( install_go; install_go_tools; configure_go_path ) &
 wait
 
-log "done"
+# One line listing anything that didn't make it into the snapshot, so a
+# failed step is easy to spot in the setup logs without scrolling for its
+# warning. Informational only: it never fails the script.
+missing=()
+for tool in gh shellcheck skopeo semgrep pre-commit uv bun go golangci-lint \
+            goimports staticcheck gopls cargo-binstall cargo-nextest garlic \
+            fly sprite sproot shuck hadolint dive trivy crane cosign syft \
+            goreleaser trufflehog actionlint zizmor; do
+  command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
+done
+rustup toolchain list 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
+if [ "${#missing[@]}" -gt 0 ]; then
+  warn "missing after setup: ${missing[*]}"
+fi
+
+log "done in ${SECONDS}s"
+# A non-zero exit fails session start; failures above are already warnings.
+exit 0

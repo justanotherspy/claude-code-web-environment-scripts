@@ -53,12 +53,20 @@ shape every edit — they are easy to violate and break session startup:
   on the current release. Both belong in the snapshot, not in a per-session
   download. `stable` stays rustup's default toolchain — a `rust-toolchain.toml`
   selects nightly per-directory.
-- **Never resolve a version through `api.github.com`.** It is on the Trusted
-  list, but unauthenticated calls are rate-limited per IP and shared build IPs
+- **Never resolve a version through `api.github.com`**, even under Full
+  access. Unauthenticated calls are rate-limited per IP and shared build IPs
   hit the limit, so the step 403s intermittently and that tool silently misses
   the snapshot (this is what happened to `dive`). Use a stable
-  `/releases/latest/download/<asset>` URL, or read the tag from the redirect
-  `github.com/<owner>/<repo>/releases/latest` issues.
+  `/releases/latest/download/<asset>` URL, read the tag from the redirect
+  `github.com/<owner>/<repo>/releases/latest` issues, or, for Go projects, read
+  it from `proxy.golang.org/<module>/@latest`, which isn't rate-limited.
+- **Download with the `curl` wrapper.** The script defines `curl()` with
+  timeouts and retries so one stalled host can't blow the 5-minute budget;
+  don't call `command curl` directly.
+- **Python CLIs go through `install_python_tool`** (`uv tool install` into
+  `/opt/uv-tools`, with pip as the fallback). Don't `pip install
+  --ignore-installed` into the shared site-packages.
+- **Always end with `exit 0`**, after the missing-tools summary.
 - **Keep total runtime under ~5 minutes** so the cache can build. `apt` runs
   first and to completion (it holds the dpkg lock), then independent downloads
   fan out with `&` and a single `wait`.
@@ -68,8 +76,9 @@ shape every edit — they are easy to violate and break session startup:
 
 ## Network allowlist coupling
 
-The script and the environment's network configuration are tightly coupled, and
-the coupling is invisible from the code alone:
+The environment now runs with **Full** network access, so every step can reach
+its host. The coupling below matters again only if the environment moves back
+to Trusted or Custom, so keep the README allowlist accurate anyway:
 
 - Under the default **Trusted** level these work (apt / PyPI / GitHub /
   githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
