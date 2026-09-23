@@ -3,7 +3,6 @@
   "extends": [
     "local>justanotherspy/renovate"
   ],
-  "labels": ["dependencies"],
   "customManagers": [
     {
       "customType": "regex",
