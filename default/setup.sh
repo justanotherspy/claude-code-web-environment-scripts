@@ -26,18 +26,16 @@
 # the cache, so switching to Full already re-runs this script.
 #
 # If you move the environment back to "Trusted", these steps still work
-# (apt, PyPI, GitHub, githubusercontent, crates.io, the Go module proxy,
-# static.rust-lang.org): gh, shellcheck, unzip, skopeo, semgrep, pre-commit,
-# sproot, shuck, garlic, zizmor, cargo-binstall, golangci-lint, goimports,
-# staticcheck, gopls, hadolint, dive, trivy, crane, cosign, syft, goreleaser,
-# trufflehog, actionlint and the Rust nightly toolchain. These fetch from hosts
+# (apt, PyPI, GitHub, githubusercontent, crates.io, the Go module proxy):
+# gh, shellcheck, unzip, skopeo, semgrep, pre-commit, zizmor, cargo-binstall,
+# golangci-lint, goimports, staticcheck, gopls, hadolint, dive, trivy, crane,
+# cosign, syft, goreleaser, trufflehog and actionlint. These fetch from hosts
 # NOT on the Trusted list and need "Custom" access (default package managers
 # enabled) plus the README's allowlist:
 #     uv          -> astral.sh / *.astral.sh
 #     bun         -> bun.sh / *.bun.sh
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
-#     nextest     -> get.nexte.st
 # Without them, the matching step logs a warning and is skipped.
 # ---------------------------------------------------------------------------
 
@@ -60,10 +58,10 @@ done
 unset _dir
 export PATH
 
-# Versions track latest by default. To pin for fully reproducible caches, set
-# SPROOT_VERSION / SHUCK_VERSION (e.g. v0.3.5) in the environment variables;
-# both installers read them automatically. The Go toolchain is pinned here and
-# overridable with GO_VERSION (the base image ships an older Go).
+# Versions track latest by default. To pin zizmor for a reproducible cache, set
+# ZIZMOR_VERSION (e.g. v1.25.2) in the environment variables. The Go toolchain
+# is pinned here and overridable with GO_VERSION (the base image ships an older
+# Go).
 GO_VERSION="${GO_VERSION:-1.27.1}"
 
 log()  { printf '\n=== setup: %s ===\n' "$*"; }
@@ -114,50 +112,6 @@ install_bun() {
     || warn "bun install failed (is bun.sh on the allowlist, and is unzip present?)"
 }
 
-# Rust nightly toolchain. The base image ships a stable rustc/cargo through
-# rustup, but not nightly -- and repos that pin `channel = "nightly"` in
-# rust-toolchain.toml (garnish) need it plus rustfmt/clippy/rust-analyzer/
-# rust-src before anything builds. Without this, every session pays the
-# download on its first cargo command; baking it into the snapshot costs ~20s
-# once. rustup.rs and static.rust-lang.org are both on the Trusted list, so no
-# allowlist changes are needed.
-#
-# `stable` stays the default toolchain: a rust-toolchain.toml selects nightly
-# per-directory, so only repos that ask for it get it. Nightly moves daily and
-# the snapshot is rebuilt roughly weekly, so the baked toolchain can be a few
-# days behind -- `rustup update nightly` in-session refreshes it.
-install_rust_nightly() {
-  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust nightly"; return; }
-  if rustup toolchain list 2>/dev/null | grep -q '^nightly-'; then
-    log "Rust nightly already present"; return
-  fi
-  log "Rust nightly toolchain (rustfmt, clippy, rust-analyzer, rust-src)"
-  rustup toolchain install nightly --profile minimal --no-self-update \
-    -c rustfmt -c clippy -c rust-analyzer -c rust-src \
-    || warn "Rust nightly install failed"
-}
-
-# cargo-nextest: the test runner garnish's `make check` / `make test` drive
-# (it groups the serial tests `cargo test` cannot). Pulled as a prebuilt
-# binary from get.nexte.st, which redirects to the GitHub release asset --
-# `cargo binstall cargo-nextest` falls back to a 3+ minute from-source build
-# here, which does not fit the setup budget. get.nexte.st is NOT on the
-# Trusted list; add it to the Custom allowlist (see README).
-install_cargo_nextest() {
-  command -v cargo-nextest >/dev/null 2>&1 && { log "cargo-nextest already present"; return; }
-  log "cargo-nextest (Rust test runner)"
-  local tmp
-  tmp="$(mktemp -d)"
-  if curl -fsSL -o "${tmp}/nextest.tar.gz" "https://get.nexte.st/latest/linux" \
-     && tar -C "${tmp}" -xzf "${tmp}/nextest.tar.gz" cargo-nextest \
-     && [ -x "${tmp}/cargo-nextest" ]; then
-    install -m 0755 "${tmp}/cargo-nextest" /usr/local/bin/cargo-nextest
-  else
-    warn "cargo-nextest install failed (is get.nexte.st on the allowlist?)"
-  fi
-  rm -rf "${tmp}"
-}
-
 install_cargo_binstall() {
   command -v cargo >/dev/null 2>&1 || { warn "cargo not found; skipping cargo-binstall"; return; }
   command -v cargo-binstall >/dev/null 2>&1 && { log "cargo-binstall already present"; return; }
@@ -168,32 +122,6 @@ install_cargo_binstall() {
   # Surface it on the system PATH (it installs into $CARGO_HOME/bin by default).
   [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/cargo-binstall" ] \
     && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/cargo-binstall" /usr/local/bin/cargo-binstall
-}
-
-# garlic CLI (justanotherspy/garlic): tracks active coding time with Claude Code
-# and nudges breaks. Pulls the prebuilt binary straight from the GitHub release
-# (a cargo-dist tarball; github.com release assets are on the Trusted list) --
-# faster and more reliable than `cargo binstall`, which can fall back to a slow
-# from-source build. The asset name is version-independent, so latest/download
-# resolves without an api.github.com lookup; set GARLIC_VERSION (e.g. v0.3.3) to
-# pin a specific release.
-install_garlic() {
-  command -v garlic >/dev/null 2>&1 && { log "garlic CLI already present"; return; }
-  log "garlic CLI (justanotherspy/garlic)"
-  local base="https://github.com/justanotherspy/garlic/releases"
-  local url="${base}/latest/download/garlic-x86_64-unknown-linux-gnu.tar.gz"
-  [ -n "${GARLIC_VERSION:-}" ] \
-    && url="${base}/download/${GARLIC_VERSION}/garlic-x86_64-unknown-linux-gnu.tar.gz"
-  local tmp
-  tmp="$(mktemp -d)"
-  if curl -fsSL -o "${tmp}/garlic.tar.gz" "${url}" \
-     && tar -C "${tmp}" -xzf "${tmp}/garlic.tar.gz" garlic \
-     && [ -x "${tmp}/garlic" ]; then
-    install -m 0755 "${tmp}/garlic" /usr/local/bin/garlic
-  else
-    warn "garlic install failed"
-  fi
-  rm -rf "${tmp}"
 }
 
 # zizmor (zizmorcore/zizmor): static analysis for GitHub Actions workflows.
@@ -386,18 +314,6 @@ install_fly() {
     || warn "flyctl install failed (is fly.io on the allowlist?)"
 }
 
-install_sproot() {
-  log "sproot (justanotherspy/sproot)"
-  curl -fsSL https://raw.githubusercontent.com/justanotherspy/sproot/main/install.sh | sh \
-    || warn "sproot install failed"
-}
-
-install_shuck() {
-  log "shuck (justanotherspy/shuck)"
-  curl -fsSL https://raw.githubusercontent.com/justanotherspy/shuck/main/install.sh | bash \
-    || warn "shuck install failed"
-}
-
 # --- Docker image development tooling -------------------------------------
 # Docker itself ships in the base image; these add the tools for *authoring*
 # and inspecting images. All three pull prebuilt binaries from GitHub release
@@ -563,9 +479,6 @@ install_apt
 
 install_semgrep &
 install_fly &
-install_sproot &
-install_shuck &
-install_garlic &
 install_uv &
 install_bun &
 # Docker image development tools (all from GitHub, independent downloads).
@@ -582,13 +495,9 @@ install_actionlint &
 install_golangci_lint &
 install_zizmor &
 install_precommit &
-install_cargo_nextest &
-# cargo-binstall no longer has any in-script consumers (garlic and zizmor now
-# pull their binaries straight from GitHub releases), but we still install it so
-# sessions can `cargo binstall` further cargo tools as prebuilt binaries.
+# cargo-binstall has no in-script consumers; it is installed so sessions can
+# `cargo binstall` further cargo tools as prebuilt binaries.
 install_cargo_binstall &
-# Rust nightly (rust-toolchain.toml repos) alongside the image's stable.
-install_rust_nightly &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.
@@ -600,12 +509,11 @@ wait
 # warning. Informational only: it never fails the script.
 missing=()
 for tool in gh shellcheck skopeo semgrep pre-commit uv bun go golangci-lint \
-            goimports staticcheck gopls cargo-binstall cargo-nextest garlic \
-            fly sproot shuck hadolint dive trivy crane cosign syft \
+            goimports staticcheck gopls cargo-binstall fly hadolint dive \
+            trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
 done
-rustup toolchain list 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
 if [ "${#missing[@]}" -gt 0 ]; then
   warn "missing after setup: ${missing[*]}"
 fi
