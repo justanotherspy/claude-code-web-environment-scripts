@@ -88,7 +88,7 @@ to Trusted or Custom, so keep the README allowlist accurate anyway:
   `static.rust-lang.org`).
 - `uv` (`astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
   (`go.dev/dl` redirects to `dl.google.com`), `cargo-nextest`
-  (`get.nexte.st`), `sprite`, and `flyctl` download
+  (`get.nexte.st`), and `flyctl` download
   from hosts **not** on the Trusted list, so the environment must use **Custom**
   access (with default package managers still enabled) plus the allowlist
   documented in the README's "Network access" section. Without those domains,

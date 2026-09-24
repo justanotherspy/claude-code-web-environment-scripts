@@ -36,7 +36,6 @@
 #     uv          -> astral.sh / *.astral.sh
 #     bun         -> bun.sh / *.bun.sh
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
-#     sprite CLI  -> sprites.dev / *.sprites.dev / sprites-binaries.t3.storage.dev
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
 #     nextest     -> get.nexte.st
 # Without them, the matching step logs a warning and is skipped.
@@ -387,13 +386,6 @@ install_fly() {
     || warn "flyctl install failed (is fly.io on the allowlist?)"
 }
 
-install_sprite() {
-  command -v sprite >/dev/null 2>&1 && { log "sprite CLI already present"; return; }
-  log "sprite CLI"
-  curl -fsSL https://sprites.dev/install.sh | sh \
-    || warn "sprite CLI install failed (are sprites.dev + sprites-binaries.t3.storage.dev allowlisted?)"
-}
-
 install_sproot() {
   log "sproot (justanotherspy/sproot)"
   curl -fsSL https://raw.githubusercontent.com/justanotherspy/sproot/main/install.sh | sh \
@@ -571,7 +563,6 @@ install_apt
 
 install_semgrep &
 install_fly &
-install_sprite &
 install_sproot &
 install_shuck &
 install_garlic &
@@ -610,7 +601,7 @@ wait
 missing=()
 for tool in gh shellcheck skopeo semgrep pre-commit uv bun go golangci-lint \
             goimports staticcheck gopls cargo-binstall cargo-nextest garlic \
-            fly sprite sproot shuck hadolint dive trivy crane cosign syft \
+            fly sproot shuck hadolint dive trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
 done

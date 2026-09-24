@@ -78,7 +78,9 @@ that should run everywhere, like `npm install` — and gate it on
    environment's **API credentials** section where it's offered; plain env vars
    and the script are visible to anyone who can edit the environment. See
    [`default/credentials.example`](default/credentials.example) for the tokens
-   the installed CLIs read (`GH_TOKEN`, `FLY_API_TOKEN`, `SPRITES_TOKEN`).
+   the installed CLIs read. `gh` already authenticates through the Claude GitHub
+   App, and Sprites is used through its claude.ai connector, so neither needs a
+   token.
 8. **Big/slow downloads:** if a single download won't fit in ~5 minutes, move it
    to a SessionStart hook that backgrounds it, or pre-pull Docker images in the
    script so the layers land in the cache.
@@ -106,7 +108,6 @@ On top of the pre-installed image, in parallel:
 | `cargo-nextest`  | `get.nexte.st`                           | Rust test runner (`make check`/`make test`) — **needs non-default domains** |
 | `garlic`         | GitHub releases (`justanotherspy/garlic`) | Tracks coding time and nudges breaks (prebuilt binary)       |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
-| `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
 | `sproot`         | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo     |
 | `shuck`          | `raw.githubusercontent.com/.../shuck`    | Returns the exact failing CI step logs for a PR      |
 | `hadolint`       | GitHub releases (`hadolint/hadolint`)    | Dockerfile linter (static binary)                    |
@@ -174,8 +175,8 @@ in the snapshot, then how long the run took. It always exits 0.
 Every download in the script goes through a `curl` wrapper with a connect
 timeout, a 180-second transfer cap and two retries, so one stalled host can't
 push the run past the ~5-minute cache budget. Third-party installers piped to
-`sh` (trivy, syft, trufflehog, actionlint, sproot, shuck, bun, uv, flyctl,
-sprite) make their own curl calls and aren't covered.
+`sh` (trivy, syft, trufflehog, actionlint, sproot, shuck, bun, uv, flyctl)
+make their own curl calls and aren't covered.
 
 `semgrep` and `pre-commit` install with `uv tool install`, which gives each one
 its own virtualenv under `/opt/uv-tools` and links it into `/usr/local/bin`.
@@ -230,7 +231,7 @@ logs a warning and is skipped:
 - `uv` → `astral.sh` / `*.astral.sh`
 - `bun` → `bun.sh` / `*.bun.sh`
 - `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
-- `sprite` → `sprites.dev` / `*.sprites.dev` / `sprites-binaries.t3.storage.dev`
+- `sproot` → `sprites.dev` / `*.sprites.dev` (the Sprites API it calls at run time)
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
 - `cargo-nextest` → `get.nexte.st` (it redirects to the GitHub release asset,
   which `*.githubusercontent.com` already covers)
@@ -257,7 +258,6 @@ fly.io
 api.machines.dev
 sprites.dev
 *.sprites.dev
-sprites-binaries.t3.storage.dev
 astral.sh
 *.astral.sh
 bun.sh
