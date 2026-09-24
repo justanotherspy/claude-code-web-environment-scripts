@@ -102,7 +102,7 @@ On top of the pre-installed image, in parallel:
 | `uv`             | `astral.sh/uv/install.sh`                | Upgraded in place to the latest release — **needs non-default domains** |
 | `bun`            | `bun.sh/install`                         | Upgraded in place to the latest release; use `bun add -g` for global JS CLIs — **needs non-default domains** |
 | Python           | `uv python install` (GitHub release assets) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
-| Node.js          | `nodejs.org/dist`                        | Latest LTS (or `NODE_VERSION`) in `/opt/node<major>`, made the default `node`/`npm` |
+| Node.js          | `nodejs.org/dist`                        | Latest Current release (or `NODE_VERSION`) in `/opt/node<major>`, made the default `node`/`npm` |
 | Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Latest nightly with rustfmt/clippy/rust-analyzer/rust-src, set as rustup's **default** toolchain |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
 | `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
@@ -155,7 +155,7 @@ compiling them.
 
 Versions track **latest** by default. To hold one back, set an environment
 variable: `ZIZMOR_VERSION` (e.g. `v1.25.2`), `PYTHON_VERSION` (e.g. `3.13`) or
-`NODE_VERSION` (`lts`, the default; `current`; or a major such as `26`). The Go
+`NODE_VERSION` (`current`, the default; `lts`; or a major such as `24`). The Go
 toolchain is pinned via `GO_VERSION` (default `1.27.1`, the current release);
 set it to upgrade or roll back the installed Go. See
 [`default/.env.example`](default/.env.example).

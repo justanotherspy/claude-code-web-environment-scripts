@@ -44,7 +44,7 @@ shape every edit — they are easy to violate and break session startup:
   [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)).
   Don't reinstall those. The deliberate exceptions: the script **upgrades** the
   Go (to `GO_VERSION`), Rust (latest **nightly**, set as rustup's default), Python (latest stable via
-  `uv python install --default`) and Node (latest LTS from nodejs.org)
+  `uv python install --default`) and Node (latest Current release from nodejs.org)
   toolchains, and `uv` and `bun`, because the image's copies lag. The `gh` step
   stays a guarded no-op. Beyond that, add only tools the image lacks, such as
   `cargo-binstall`.
@@ -114,8 +114,8 @@ The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
 (default `1.27.1`, overridable from the environment). `uv`, `bun`, Rust
 nightly (the default toolchain; a snapshot's nightly can be a few days old,
 `rustup update nightly` refreshes it), Python (latest stable CPython; `PYTHON_VERSION` pins a minor such as
-`3.13`), Node (latest LTS; `NODE_VERSION` takes `current` or a major such as
-`26`), `golangci-lint` and the `go install` tools all track latest.
+`3.13`), Node (latest Current release; `NODE_VERSION` takes `lts` or a major such as
+`24`), `golangci-lint` and the `go install` tools all track latest.
 
 `GO_VERSION` is the only hardcoded tool version in the repo. `renovate.json`
 (Renovate App) keeps it current via a regex custom manager on `default/setup.sh`

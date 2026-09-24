@@ -170,7 +170,7 @@ install_rust() {
 }
 
 # Node.js. The image ships Node 20/21/22 under /opt/nodeNN with 22 on PATH.
-# Install the latest LTS (or NODE_VERSION: `current`, or a major such as 26)
+# Install the latest Current release (or NODE_VERSION: `lts`, or a major such as 24)
 # from nodejs.org, which is on the Trusted list, as /opt/node<major>, and link
 # node/npm/npx/corepack into ~/.local/bin (ahead of /opt/node22/bin on the
 # session PATH) and /usr/local/bin. The version comes from nodejs.org's static
@@ -178,7 +178,7 @@ install_rust() {
 # (~/.bun/bin is on PATH); `npm i -g` would land in /opt/node<major>/bin.
 install_node() {
   command -v jq >/dev/null 2>&1 || { warn "jq not found; skipping Node.js"; return; }
-  local sel="${NODE_VERSION:-lts}" filter
+  local sel="${NODE_VERSION:-current}" filter
   case "${sel}" in
     lts)            filter='[.[] | select(.lts != false)][0].version' ;;
     current|latest) filter='.[0].version' ;;
