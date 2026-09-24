@@ -38,28 +38,43 @@ shape every edit — they are easy to violate and break session startup:
   must be non-fatal: wrap it so failure logs a `warn` and continues (see the
   `install_*` functions and the `|| warn ...` pattern). Do not add a top-level
   `set -e`.
-- **Only install what the base image lacks.** The cloud image already ships
-  Python, Node, Ruby, Go, Rust, Java, PHP, Docker, Postgres, Redis, git, gh, jq,
-  ripgrep, `uv`, `bun`, and the common test runners (see
+- **Defer to the base image; upgrade only the toolchains.** The cloud image
+  already ships Python, Node, Ruby, Go, Rust, Java, PHP, Docker, Postgres,
+  Redis, git, gh, jq, ripgrep, `uv`, `bun`, and the common test runners (see
   [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)).
-  Don't reinstall those — the `uv`, `bun` and `gh` steps are kept only as
-  guarded no-ops in case the image drops them. Exceptions the script makes on
-  purpose: it **upgrades** Go to the pinned `GO_VERSION` because the base Go
-  lags the latest release, and it adds `cargo-binstall`, the Rust **nightly**
-  toolchain and `cargo-nextest`, none of which the base image has.
-- **Toolchains, not just CLIs.** Two repos here pin a toolchain the base image
-  doesn't carry: garnish's `rust-toolchain.toml` pins `channel = "nightly"`
-  with rustfmt/clippy/rust-analyzer/rust-src, and the Go repos' `go.mod` sits
-  on the current release. Both belong in the snapshot, not in a per-session
-  download. `stable` stays rustup's default toolchain — a `rust-toolchain.toml`
-  selects nightly per-directory.
+  Don't reinstall those. The deliberate exceptions: the script **upgrades** the
+  Go (to `GO_VERSION`), Rust (latest **nightly**, set as rustup's default), Python (latest stable via
+  `uv python install --default`) and Node (latest Current release from nodejs.org)
+  toolchains, `uv` and `bun`, and `ripgrep` and `shellcheck` (latest releases
+  into `/usr/local/bin`, ahead of the image's apt copies), because the image's
+  copies lag. The `gh` step
+  stays a guarded no-op. Beyond that, add only tools the image lacks, such as
+  `cargo-binstall`.
+- **Prefer uv and bun.** Python CLIs go through `install_python_tool` (uv);
+  global JS CLIs go through `bun add -g` rather than `npm i -g`, whose global bin
+  dir isn't on PATH (`corepack` is installed this way, since Node 25+ dropped
+  it). `~/.bun/bin` comes after the image's `/opt/node22/bin` on PATH, so link a
+  CLI into `~/.local/bin` when the image's Node ships an older copy of it. Upgrade uv and bun by re-running their installers:
+  `uv self update` and `bun upgrade` resolve versions through `api.github.com`.
+- **Don't repoint the image's interpreters.** The new Python and Node become
+  defaults via links in `~/.local/bin` (first on the session PATH).
+  `/usr/bin/python3` and `/usr/local/bin/python3` stay on the image's Python so
+  apt keeps working. Node installs into its own `/opt/node-v<version>`: never
+  delete or overwrite the image's `/opt/node20-22`, which hold its global CLIs
+  (including the `claude` link).
+- **Toolchains, not just CLIs.** The Go repos' `go.mod` sits on the current
+  release, which the base image's Go lags, so the upgraded toolchain belongs in
+  the snapshot, not in a per-session download.
 - **Never resolve a version through `api.github.com`**, even under Full
   access. Unauthenticated calls are rate-limited per IP and shared build IPs
   hit the limit, so the step 403s intermittently and that tool silently misses
   the snapshot (this is what happened to `dive`). Use a stable
   `/releases/latest/download/<asset>` URL, read the tag from the redirect
   `github.com/<owner>/<repo>/releases/latest` issues, or, for Go projects, read
-  it from `proxy.golang.org/<module>/@latest`, which isn't rate-limited.
+  it from `proxy.golang.org/<module>/@latest`, which isn't rate-limited. The
+  `/releases/latest` redirect 403s from sessions for repos not attached to
+  them, so prefer a registry that knows the version (ripgrep reads the
+  crates.io sparse index) or a fixed tag (ShellCheck's `stable` release).
 - **Download with the `curl` wrapper.** The script defines `curl()` with
   timeouts and retries so one stalled host can't blow the 5-minute budget;
   don't call `command curl` directly.
@@ -72,7 +87,8 @@ shape every edit — they are easy to violate and break session startup:
   fan out with `&` and a single `wait`.
 - **The snapshot captures files, not processes.** Don't expect to start
   long-running services here; they won't survive into sessions.
-- **Make steps idempotent**, typically guarded with `command -v <tool>`.
+- **Make steps idempotent**, typically guarded with `command -v <tool>`, or a
+  version check for upgrades.
 
 ## Network allowlist coupling
 
@@ -82,13 +98,13 @@ to Trusted or Custom, so keep the README allowlist accurate anyway:
 
 - Under the default **Trusted** level these work (apt / PyPI / GitHub /
   githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
-  `semgrep`, `sproot`, `shuck`, `garlic` (prebuilt GitHub release binary),
-  `cargo-binstall`, `golangci-lint`, the `go install` tools (`goimports`,
-  `staticcheck`, `gopls`), and the Rust `nightly` toolchain (`rustup.rs` /
-  `static.rust-lang.org`).
-- `uv` (`astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
-  (`go.dev/dl` redirects to `dl.google.com`), `cargo-nextest`
-  (`get.nexte.st`), `sprite`, and `flyctl` download
+  `semgrep`, `ripgrep` (crates.io + GitHub), `zizmor`, `cargo-binstall`,
+  `golangci-lint`, the `go install` tools (`goimports`, `staticcheck`,
+  `gopls`), Rust nightly (`static.rust-lang.org`), Node.js (`nodejs.org`) and
+  `corepack` (npm registry).
+- `uv` and the Python upgrade (`astral.sh`; uv downloads Python from
+  `releases.astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
+  (`go.dev/dl` redirects to `dl.google.com`), and `flyctl` download
   from hosts **not** on the Trusted list, so the environment must use **Custom**
   access (with default package managers still enabled) plus the allowlist
   documented in the README's "Network access" section. Without those domains,
@@ -99,17 +115,20 @@ README's recommended allowlist — otherwise it will silently fail in the cloud.
 
 ## Versions
 
-`sproot`, `shuck`, `garlic`, and `zizmor` track **latest** by default. The
-`sproot`/`shuck` installers and the `garlic`/`zizmor` steps read `SPROOT_VERSION`
-/ `SHUCK_VERSION` / `GARLIC_VERSION` / `ZIZMOR_VERSION` env vars (e.g. `v0.3.5`)
-for pinned, reproducible caches — set those in the environment, not in the script.
+`zizmor` tracks **latest** by default; the `ZIZMOR_VERSION` env var (e.g.
+`v1.25.2`) pins it for a reproducible cache — set it in the environment, not in
+the script.
+`default/.env.example` lists every env var the script reads, and
+`default/credentials.example` lists the tokens the installed CLIs use. If you add
+a variable the script reads, or install a CLI that authenticates with a token,
+add it to the matching example file.
 
 The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
-(default `1.27.1`, overridable from the environment). `uv`, `bun`,
-`golangci-lint`, the `go install` tools, the Rust `nightly` toolchain and
-`cargo-nextest` all track latest. Nightly moves daily and the snapshot lives
-about a week, so a session's nightly can be a few days old; `rustup update
-nightly` refreshes it in place.
+(default `1.27.1`, overridable from the environment). `uv`, `bun`, Rust
+nightly (the default toolchain; a snapshot's nightly can be a few days old,
+`rustup update nightly` refreshes it), Python (latest stable CPython; `PYTHON_VERSION` pins a minor such as
+`3.13`), Node (latest Current release; `NODE_VERSION` takes `lts` or a major such as
+`24`), `golangci-lint` and the `go install` tools all track latest.
 
 `GO_VERSION` is the only hardcoded tool version in the repo. `renovate.json`
 (Renovate App) keeps it current via a regex custom manager on `default/setup.sh`

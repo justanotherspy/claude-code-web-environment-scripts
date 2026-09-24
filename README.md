@@ -39,8 +39,11 @@ The cloud image already ships common runtimes and tools — Python 3 (with `pip`
 `poetry`, `uv`, `black`, `mypy`, `pytest`, `ruff`), Node 20/21/22 (with `npm`,
 `yarn`, `pnpm`, `bun`, `eslint`, `prettier`), Ruby, Go, Rust (stable `rustc` and
 `cargo` via `rustup`), Java, PHP, C/C++, Docker, Postgres 16, Redis 7, and
-`git`, `gh`, `jq`, `yq`, `ripgrep`, `tmux`. **Only install what the image
-lacks.** Run `check-tools` in a cloud session for the exact list, and see
+`git`, `gh`, `jq`, `yq`, `ripgrep`, `tmux`. **Defer to the image** for all of
+it, except that this script upgrades the Go, Rust, Python and Node toolchains
+and `uv` / `bun` to their latest releases, and replaces `ripgrep` and
+`shellcheck` with their latest releases, because the image's copies lag.
+Beyond that, only install what the image lacks. Run `check-tools` in a cloud session for the exact list, and see
 [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)
 for the current inventory.
 
@@ -68,15 +71,21 @@ that should run everywhere, like `npm install` — and gate it on
 2. **Stay under ~5 minutes** so the cache can build. Run independent installs in
    parallel with `&` and `wait`.
 3. **Only install what's missing.** The base image is rich; check before adding.
-4. **Make steps idempotent** — guard with `command -v <tool>` so re-runs and
-   SessionStart parity are cheap.
+   Upgrade a pre-installed toolchain only when you need a newer version (this
+   script does so for Go, Rust, Python, Node, uv, bun, ripgrep and ShellCheck).
+4. **Make steps idempotent** — guard with `command -v <tool>` (or, for an
+   upgrade, a version check) so re-runs and SessionStart parity are cheap.
 5. **Match installs to your network level.** Installs fetch over the wire; a host
    that isn't allowlisted will fail (see [Network access](#network-access)).
 6. **Non-interactive apt:** `export DEBIAN_FRONTEND=noninteractive` and pass
    `-y`.
-7. **Secrets:** there is no secrets store. Env vars and the script are visible to
-   anyone who can edit the environment — don't hardcode credentials. For private
-   `gh` operations, add a `GH_TOKEN` env var.
+7. **Secrets:** never hardcode credentials in the script. Env vars and the
+   script are visible to anyone who uses the environment. On Pro/Max plans, add
+   API keys as **API credentials**: the agent proxy attaches them as headers to
+   requests for the hosts you list, so the key never enters the VM, but they
+   aren't available to the setup script. See
+   [`default/credentials.example`](default/credentials.example). GitHub needs
+   nothing: the GitHub proxy authenticates `git` and `gh` itself.
 8. **Big/slow downloads:** if a single download won't fit in ~5 minutes, move it
    to a SessionStart hook that backgrounds it, or pre-pull Docker images in the
    script so the layers land in the cache.
@@ -88,25 +97,24 @@ On top of the pre-installed image, in parallel:
 | Tool             | Source                                   | Notes                                                |
 | ---------------- | ---------------------------------------- | ---------------------------------------------------- |
 | `gh`             | apt                                      | GitHub CLI; pre-installed, so only fetched if the image drops it |
-| `shellcheck`     | apt                                      | Shell linting; only fetched if missing               |
+| `shellcheck`     | GitHub releases (`stable` tag)           | Latest ShellCheck in `/usr/local/bin`, ahead of the image's older apt copy |
+| `rg` (ripgrep)   | GitHub releases (version from crates.io) | Latest ripgrep in `/usr/local/bin`, ahead of the image's older apt copy; Claude Code searches with it |
 | `unzip`          | apt                                      | Required by the `bun` installer                      |
 | `skopeo`         | apt                                      | Inspect/copy container images between registries     |
 | `semgrep`        | PyPI (`uv tool install`)                 | Static analysis, in its own virtualenv               |
-| `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
-| `bun`            | `bun.sh/install`                         | JS runtime / package manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
+| `uv`             | `astral.sh/uv/install.sh`                | Upgraded in place to the latest release — **needs non-default domains** |
+| `bun`            | `bun.sh/install`                         | Upgraded in place to the latest release; use `bun add -g` for global JS CLIs — **needs non-default domains** |
+| Python           | `uv python install` (`releases.astral.sh`) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
+| Node.js          | `nodejs.org/dist`                        | Latest Current release (or `NODE_VERSION`) in `/opt/node-v<version>` (the image's `/opt/node20-22` are left alone), made the default `node`/`npm` |
+| `corepack`       | `bun add -g` (npm registry)              | pnpm/yarn version manager; Node 25+ no longer bundles it. Falls back to `npm i -g` |
+| Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Latest nightly with rustfmt/clippy/rust-analyzer/rust-src, set as rustup's **default** toolchain |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
 | `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
 | `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
 | `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
-| Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Toolchain for `rust-toolchain.toml` repos, with rustfmt/clippy/rust-analyzer/rust-src |
-| `cargo-nextest`  | `get.nexte.st`                           | Rust test runner (`make check`/`make test`) — **needs non-default domains** |
-| `garlic`         | GitHub releases (`justanotherspy/garlic`) | Tracks coding time and nudges breaks (prebuilt binary)       |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
-| `sprite`         | `sprites.dev/install.sh`                 | sprite.dev CLI — **needs non-default domains**       |
-| `sproot`         | `raw.githubusercontent.com/.../sproot`   | Bootstraps sprite.dev sprites from a config repo     |
-| `shuck`          | `raw.githubusercontent.com/.../shuck`    | Returns the exact failing CI step logs for a PR      |
 | `hadolint`       | GitHub releases (`hadolint/hadolint`)    | Dockerfile linter (static binary)                    |
 | `dive`           | GitHub releases (`wagoodman/dive`)       | Inspect image layers / find wasted space             |
 | `trivy`          | GitHub (`aquasecurity/trivy` install.sh) | Scan images, filesystems & Dockerfiles for vulns/misconfigs |
@@ -119,36 +127,53 @@ On top of the pre-installed image, in parallel:
 | `zizmor`         | GitHub releases (`zizmorcore/zizmor`)    | Static security analysis of GitHub Actions (prebuilt binary) |
 | `pre-commit`     | PyPI (`uv tool install`)                 | Git hook framework (drives `make hooks`), in its own virtualenv |
 
+The upgraded Python and Node become the defaults through links in `~/.local/bin`,
+which is first on the session PATH. The image's own interpreters stay in place:
+`/usr/bin/python3` and `/usr/local/bin/python3` are still 3.11, so `apt` keeps
+working, and the image's Python CLIs (`pytest`, `black`, `mypy`, `ruff`, which
+are uv tools with their own interpreters) are unaffected. What changes for bare
+`python3`:
+
+- It sees none of the image's site-packages, so `python3 -m pytest` or
+  `import yaml` fail where `pytest` or `/usr/bin/python3` work.
+- `pip` is still the image's 3.11 `pip`, so `pip install foo` doesn't make
+  `foo` importable from `python3`.
+- uv marks its Pythons externally managed, so `python3 -m pip install` refuses.
+
+Use `uv run`, `uv pip` or `uvx` in projects, or `/usr/bin/python3` for the image's
+interpreter. Likewise `npm i -g` lands in `/opt/node-v<version>/bin`, which isn't
+on PATH, so install global JS CLIs with
+`bun add -g` (`~/.bun/bin` is on PATH, though after the image's
+`/opt/node22/bin`, which is why the script links `corepack` into `~/.local/bin`
+as well).
+
+`uv` and `bun` are upgraded by re-running their installers rather than
+`uv self update` / `bun upgrade`, which both ask `api.github.com` for the latest
+version (see below).
+
 All Go tools the script installs (`golangci-lint`, `goimports`, `staticcheck`,
 `gopls`) land in `/usr/local/bin`, which is on PATH for every kind of session
 shell. The script also writes `/etc/profile.d/go-path.sh` (and hooks it into
 `/etc/bash.bashrc`) so that anything `go install`ed *during* a session — which
 lands in `$GOBIN`, or `$GOPATH/bin` when unset — is on PATH too.
 
-The base image already ships a **stable** `cargo`/`rustc` through `rustup`, but
-no nightly toolchain, so a repo that pins `channel = "nightly"` in its
-`rust-toolchain.toml` would download one on its first `cargo` command in every
-session. The script installs `nightly` (with `rustfmt`, `clippy`,
-`rust-analyzer` and `rust-src`) into the snapshot instead — about 15 seconds,
-paid once. `stable` stays the **default** toolchain, so nightly is used only
-where a `rust-toolchain.toml` asks for it. Nightly moves daily and the snapshot
-is rebuilt roughly weekly, so the baked toolchain can be a few days behind; run
-`rustup update nightly` in-session for the newest.
+The base image ships only a **stable** `cargo`/`rustc` through `rustup`. The
+script installs the latest **nightly** (with `rustfmt`, `clippy`,
+`rust-analyzer` and `rust-src`) and makes it rustup's default, so `cargo` and
+`rustc` are nightly everywhere; a repo's `rust-toolchain.toml` still overrides
+it. The image's stable stays installed (`cargo +stable ...`) but isn't updated.
+Nightly moves daily and the snapshot is rebuilt roughly weekly, so the baked
+nightly can be a few days old; run `rustup update nightly` in-session for the
+newest. The script also adds `cargo-binstall`, which installs further cargo tools as prebuilt
+binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
+compiling them.
 
-The script also adds `cargo-nextest` (the test runner `make check` / `make test`
-drive in these repos) as a prebuilt binary, and `cargo-binstall`, which then
-installs any further cargo tools as prebuilt binaries in seconds (e.g.
-`cargo binstall cargo-edit cargo-watch`) instead of compiling them. Note that
-`cargo binstall cargo-nextest` itself falls back to a 3-minute from-source
-build, which is why nextest comes straight from `get.nexte.st`.
-
-Versions track **latest** by default. To pin for fully reproducible caches, set
-`SPROOT_VERSION` / `SHUCK_VERSION` / `GARLIC_VERSION` / `ZIZMOR_VERSION` (e.g.
-`v0.3.5`) as environment variables — the `sproot`/`shuck` installers and the
-`garlic`/`zizmor` steps read them automatically. The Go toolchain is pinned via
-`GO_VERSION` (default `1.27.1`, the current release); set it to upgrade or roll
-back the installed Go. Rust `nightly` and `cargo-nextest` track latest and are
-not pinnable from the environment.
+Versions track **latest** by default. To hold one back, set an environment
+variable: `ZIZMOR_VERSION` (e.g. `v1.25.2`), `PYTHON_VERSION` (e.g. `3.13`) or
+`NODE_VERSION` (`current`, the default; `lts`; or a major such as `24`). The Go
+toolchain is pinned via `GO_VERSION` (default `1.27.1`, the current release);
+set it to upgrade or roll back the installed Go. See
+[`default/.env.example`](default/.env.example).
 
 ### Keeping pinned versions current
 
@@ -172,8 +197,8 @@ in the snapshot, then how long the run took. It always exits 0.
 Every download in the script goes through a `curl` wrapper with a connect
 timeout, a 180-second transfer cap and two retries, so one stalled host can't
 push the run past the ~5-minute cache budget. Third-party installers piped to
-`sh` (trivy, syft, trufflehog, actionlint, sproot, shuck, bun, uv, flyctl,
-sprite) make their own curl calls and aren't covered.
+`sh` (trivy, syft, trufflehog, actionlint, bun, uv, flyctl) make their own
+curl calls and aren't covered.
 
 `semgrep` and `pre-commit` install with `uv tool install`, which gives each one
 its own virtualenv under `/opt/uv-tools` and links it into `/usr/local/bin`.
@@ -192,15 +217,17 @@ environment back to **Trusted** or **Custom**.
 The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
 (apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
-steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
-`semgrep` and `pre-commit` (PyPI), `sproot`, `shuck`, `garlic`, `zizmor` and
-`cargo-binstall` (all GitHub release assets), `golangci-lint` (`golangci-lint.run`
+steps work out of the box: `gh`, `unzip`, `skopeo` (all apt), `shellcheck` and
+`ripgrep` (GitHub release assets),
+`semgrep` and `pre-commit` (PyPI), `zizmor` and `cargo-binstall` (GitHub
+release assets), `golangci-lint` (`golangci-lint.run`
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
-`trufflehog` and `actionlint` (all from GitHub release assets), and the Rust
-`nightly` toolchain (`rustup.rs` and `static.rust-lang.org` are both on the
-Trusted list).
+`trufflehog` and `actionlint` (all from GitHub release assets), and the
+toolchain upgrades for Rust nightly (`static.rust-lang.org`) and Node
+(`nodejs.org`), plus `corepack` (npm registry). The Python upgrade is not: `uv`
+downloads it from `releases.astral.sh` (see the allowlist below).
 
 > **Avoid `api.github.com` in the script, even under Full access.** It *is* on
 > the Trusted list, but unauthenticated calls are rate-limited per IP and shared
@@ -211,7 +238,11 @@ Trusted list).
 > that `github.com/<owner>/<repo>/releases/latest` issues, or, for Go projects,
 > from the Go module proxy (`proxy.golang.org/<module>/@latest`), which isn't
 > rate-limited. `dive` tries the redirect and falls back to the proxy;
-> `golangci-lint` goes straight to the proxy.
+> `golangci-lint` goes straight to the proxy. From inside a session the
+> `/releases/latest` page returns 403 for repos not attached to the session
+> (release asset downloads still work), so prefer a registry that knows the
+> version (`ripgrep` reads it from the crates.io index) or a fixed tag
+> (`shellcheck` downloads its `stable` release).
 
 > **Container registries (`cgr.dev` and friends).** The tools above can pull,
 > inspect and pin images at session time, but the Chainguard registry `cgr.dev`
@@ -225,13 +256,10 @@ environment uses **Custom** network access — *with the default package manager
 enabled* — plus the allowlist below. Without these domains the matching step
 logs a warning and is skipped:
 
-- `uv` → `astral.sh` / `*.astral.sh`
+- `uv` and Python → `astral.sh` / `*.astral.sh` (uv downloads Python from `releases.astral.sh`)
 - `bun` → `bun.sh` / `*.bun.sh`
 - `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
-- `sprite` → `sprites.dev` / `*.sprites.dev` / `sprites-binaries.t3.storage.dev`
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
-- `cargo-nextest` → `get.nexte.st` (it redirects to the GitHub release asset,
-  which `*.githubusercontent.com` already covers)
 - `zizmor` docs → `zizmor.sh` / `*.zizmor.sh` (the `docs.zizmor.sh` audit
   reference pages linked from each finding; the tool itself installs under
   Trusted via crates.io + GitHub)
@@ -253,15 +281,11 @@ justanotherspy.com
 fly.io
 *.fly.dev
 api.machines.dev
-sprites.dev
-*.sprites.dev
-sprites-binaries.t3.storage.dev
 astral.sh
 *.astral.sh
 bun.sh
 *.bun.sh
 dl.google.com
-get.nexte.st
 golangci-lint.run
 *.blob.core.windows.net
 *.githubusercontent.com
@@ -292,7 +316,12 @@ this repo is the source of truth for the script's contents. To apply it:
    it down instead, pick **Custom** and add the
    [allowlist above](#network-access), keeping default package managers enabled.
 4. Optionally add environment variables (`.env` format, one `KEY=value` per
-   line, no quotes), e.g. `GH_TOKEN`, `SPROOT_VERSION`, `SETUP_DEBUG=1`.
+   line; quote a value that contains `#`). [`default/.env.example`](default/.env.example) lists every
+   variable the script reads (`SETUP_DEBUG` and the version pins), recommended
+   settings for the installed CLIs, and the variables to leave alone.
+5. Optionally add API keys under **API credentials** (Pro/Max, existing
+   environments only), one form per block in
+   [`default/credentials.example`](default/credentials.example).
 
 ## Debugging
 
@@ -311,5 +340,3 @@ this repo is the source of truth for the script's contents. To apply it:
 - [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web)
   — setup scripts, environment caching, network access, default allowlist.
 - [Hooks](https://code.claude.com/docs/en/hooks#sessionstart) — SessionStart hooks.
-- [sproot](https://github.com/justanotherspy/sproot) ·
-  [shuck](https://github.com/justanotherspy/shuck)

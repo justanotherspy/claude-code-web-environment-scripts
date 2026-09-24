@@ -13,8 +13,10 @@
 #     installs are fanned out with `&` / `wait`.
 #   - Never block session start on a flaky download: each step logs a warning
 #     and continues instead of aborting (that's why `set -e` is NOT used).
-#   - Only install things the cloud image lacks. Language runtimes, build tools,
-#     pytest/jest/cargo, postgres, redis and docker are already present.
+#   - Defer to the cloud image for everything it ships, with one exception:
+#     the Go, Rust, Python and Node toolchains and uv / bun are upgraded to
+#     their latest releases, because the image's copies lag. Otherwise only
+#     install things the image lacks.
 #
 # Docs: https://code.claude.com/docs/en/claude-code-on-the-web#setup-scripts
 #
@@ -26,19 +28,17 @@
 # the cache, so switching to Full already re-runs this script.
 #
 # If you move the environment back to "Trusted", these steps still work
-# (apt, PyPI, GitHub, githubusercontent, crates.io, the Go module proxy,
-# static.rust-lang.org): gh, shellcheck, unzip, skopeo, semgrep, pre-commit,
-# sproot, shuck, garlic, zizmor, cargo-binstall, golangci-lint, goimports,
+# (apt, PyPI, npm, GitHub, githubusercontent, crates.io, the Go module proxy,
+# static.rust-lang.org, nodejs.org): gh, shellcheck, ripgrep, unzip, skopeo,
+# semgrep, pre-commit, zizmor, cargo-binstall, golangci-lint, goimports,
 # staticcheck, gopls, hadolint, dive, trivy, crane, cosign, syft, goreleaser,
-# trufflehog, actionlint and the Rust nightly toolchain. These fetch from hosts
-# NOT on the Trusted list and need "Custom" access (default package managers
-# enabled) plus the README's allowlist:
-#     uv          -> astral.sh / *.astral.sh
+# trufflehog, actionlint, Rust nightly, Node.js and corepack. These fetch from
+# hosts NOT on the Trusted list and need "Custom" access (default package
+# managers enabled) plus the README's allowlist:
+#     uv, Python  -> astral.sh / *.astral.sh (Python from releases.astral.sh)
 #     bun         -> bun.sh / *.bun.sh
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
-#     sprite CLI  -> sprites.dev / *.sprites.dev / sprites-binaries.t3.storage.dev
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
-#     nextest     -> get.nexte.st
 # Without them, the matching step logs a warning and is skipped.
 # ---------------------------------------------------------------------------
 
@@ -61,10 +61,10 @@ done
 unset _dir
 export PATH
 
-# Versions track latest by default. To pin for fully reproducible caches, set
-# SPROOT_VERSION / SHUCK_VERSION (e.g. v0.3.5) in the environment variables;
-# both installers read them automatically. The Go toolchain is pinned here and
-# overridable with GO_VERSION (the base image ships an older Go).
+# Versions track latest by default. To pin zizmor for a reproducible cache, set
+# ZIZMOR_VERSION (e.g. v1.25.2) in the environment variables. The Go toolchain
+# is pinned here and overridable with GO_VERSION (the base image ships an older
+# Go).
 GO_VERSION="${GO_VERSION:-1.27.1}"
 
 log()  { printf '\n=== setup: %s ===\n' "$*"; }
@@ -80,12 +80,13 @@ curl() {
     --retry 2 --retry-delay 2 "$@"
 }
 
-# Install the apt packages the image lacks. gh and shellcheck ship in the
-# current image, so normally only skopeo is fetched; each is still listed in
-# case the image drops it. unzip is required by the bun installer (it ships a
+# Install the apt packages the image lacks. gh ships in the current image, so
+# normally only skopeo is fetched; gh is still listed in case the image drops
+# it. shellcheck is not here: apt's copy lags, so install_shellcheck pulls the
+# latest release instead. unzip is required by the bun installer (it ships a
 # .zip). skopeo inspects and copies container images between registries.
 install_apt() {
-  local want=(gh:gh shellcheck:shellcheck unzip:unzip skopeo:skopeo)
+  local want=(gh:gh unzip:unzip skopeo:skopeo)
   local pkgs=() entry
   for entry in "${want[@]}"; do
     command -v "${entry%%:*}" >/dev/null 2>&1 || pkgs+=("${entry#*:}")
@@ -99,64 +100,200 @@ install_apt() {
     || warn "apt install failed (${pkgs[*]})"
 }
 
+# uv and bun ship in the base image but lag their releases, so both are
+# upgraded in place rather than skipped. Neither uses its self-update command:
+# `uv self update` and `bun upgrade` resolve the latest version through
+# api.github.com, which rate-limits shared build IPs. The upstream installers
+# always serve the latest release without the API, so re-run them into the
+# directory the existing binary already lives in.
 install_uv() {
-  command -v uv >/dev/null 2>&1 && { log "uv already present"; return; }
-  log "uv (Astral Python package/project manager)"
+  local dir=/usr/local/bin
+  command -v uv >/dev/null 2>&1 && dir="$(dirname "$(command -v uv)")"
+  log "uv (Astral Python package/project manager) -> latest in ${dir}"
   curl -LsSf https://astral.sh/uv/install.sh \
-    | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
-    || warn "uv install failed (is astral.sh on the allowlist?)"
+    | env UV_INSTALL_DIR="${dir}" INSTALLER_NO_MODIFY_PATH=1 sh \
+    || warn "uv install/upgrade failed (is astral.sh on the allowlist?)"
 }
 
 install_bun() {
-  command -v bun >/dev/null 2>&1 && { log "bun already present"; return; }
-  log "bun (JS runtime / package manager)"
-  curl -fsSL https://bun.sh/install \
-    | env BUN_INSTALL=/usr/local bash \
-    || warn "bun install failed (is bun.sh on the allowlist, and is unzip present?)"
-}
-
-# Rust nightly toolchain. The base image ships a stable rustc/cargo through
-# rustup, but not nightly -- and repos that pin `channel = "nightly"` in
-# rust-toolchain.toml (garnish) need it plus rustfmt/clippy/rust-analyzer/
-# rust-src before anything builds. Without this, every session pays the
-# download on its first cargo command; baking it into the snapshot costs ~20s
-# once. rustup.rs and static.rust-lang.org are both on the Trusted list, so no
-# allowlist changes are needed.
-#
-# `stable` stays the default toolchain: a rust-toolchain.toml selects nightly
-# per-directory, so only repos that ask for it get it. Nightly moves daily and
-# the snapshot is rebuilt roughly weekly, so the baked toolchain can be a few
-# days behind -- `rustup update nightly` in-session refreshes it.
-install_rust_nightly() {
-  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust nightly"; return; }
-  if rustup toolchain list 2>/dev/null | grep -q '^nightly-'; then
-    log "Rust nightly already present"; return
+  # The image keeps bun in ~/.bun/bin (linked from /usr/local/bin); upgrade
+  # that copy so the one first on PATH is the new one.
+  local root=/usr/local
+  if command -v bun >/dev/null 2>&1; then
+    root="$(dirname "$(dirname "$(readlink -f "$(command -v bun)")")")"
   fi
-  log "Rust nightly toolchain (rustfmt, clippy, rust-analyzer, rust-src)"
-  rustup toolchain install nightly --profile minimal --no-self-update \
-    -c rustfmt -c clippy -c rust-analyzer -c rust-src \
-    || warn "Rust nightly install failed"
+  log "bun (JS runtime / package manager) -> latest in ${root}"
+  curl -fsSL https://bun.sh/install \
+    | env BUN_INSTALL="${root}" bash \
+    || { warn "bun install/upgrade failed (is bun.sh on the allowlist, and is unzip present?)"; return; }
+  [ -e /usr/local/bin/bun ] || ln -s "${root}/bin/bun" /usr/local/bin/bun
 }
 
-# cargo-nextest: the test runner garnish's `make check` / `make test` drive
-# (it groups the serial tests `cargo test` cannot). Pulled as a prebuilt
-# binary from get.nexte.st, which redirects to the GitHub release asset --
-# `cargo binstall cargo-nextest` falls back to a 3+ minute from-source build
-# here, which does not fit the setup budget. get.nexte.st is NOT on the
-# Trusted list; add it to the Custom allowlist (see README).
-install_cargo_nextest() {
-  command -v cargo-nextest >/dev/null 2>&1 && { log "cargo-nextest already present"; return; }
-  log "cargo-nextest (Rust test runner)"
+# corepack (pnpm/yarn version manager). Node 25+ no longer bundles it, so
+# install it globally with bun (falling back to npm), after the new Node and
+# bun are in place since its shim runs on `node`. bun's global bin (~/.bun/bin)
+# sits behind the image's /opt/node22/bin on the session PATH, whose older
+# corepack would otherwise win, so link it into ~/.local/bin and /usr/local/bin
+# like node itself. `corepack enable` is left to projects that want it.
+install_corepack() {
+  log "corepack (via bun)"
+  local bin=""
+  if command -v bun >/dev/null 2>&1 && bun add -g corepack; then
+    bin="$(bun pm bin -g 2>/dev/null)/corepack"
+  fi
+  if [ ! -x "${bin}" ] && command -v npm >/dev/null 2>&1; then
+    warn "bun could not install corepack; trying npm"
+    npm install -g corepack >/dev/null && bin="$(npm prefix -g)/bin/corepack"
+  fi
+  [ -x "${bin}" ] || { warn "corepack install failed"; return; }
+  local dir
+  for dir in "${HOME}/.local/bin" /usr/local/bin; do
+    mkdir -p "${dir}" && ln -sfn "${bin}" "${dir}/corepack"
+  done
+}
+
+# ripgrep: the image's apt copy (/usr/bin/rg) lags, and Claude Code searches
+# with the system rg here, so install the latest release to /usr/local/bin,
+# which comes first on PATH. The release asset name embeds the version, and
+# GitHub's /releases/latest page 403s from sessions for repos not attached to
+# them, so read the version from the crates.io sparse index (Trusted, not
+# rate-limited) instead; ripgrep's crate version matches its release tag.
+install_ripgrep() {
+  command -v jq >/dev/null 2>&1 || { warn "jq not found; skipping ripgrep"; return; }
+  local ver
+  ver="$(curl -fsSL https://index.crates.io/ri/pg/ripgrep \
+    | jq -r 'select(.yanked == false) | .vers' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+  [ -n "${ver}" ] || { warn "ripgrep install failed (could not resolve latest version)"; return; }
+  if /usr/local/bin/rg --version 2>/dev/null | head -n 1 | grep -q "^ripgrep ${ver}\b"; then
+    log "ripgrep ${ver} already present"; return
+  fi
+  log "ripgrep ${ver}"
+  local asset="ripgrep-${ver}-x86_64-unknown-linux-musl"
+  local url="https://github.com/BurntSushi/ripgrep/releases/download/${ver}/${asset}.tar.gz"
   local tmp
   tmp="$(mktemp -d)"
-  if curl -fsSL -o "${tmp}/nextest.tar.gz" "https://get.nexte.st/latest/linux" \
-     && tar -C "${tmp}" -xzf "${tmp}/nextest.tar.gz" cargo-nextest \
-     && [ -x "${tmp}/cargo-nextest" ]; then
-    install -m 0755 "${tmp}/cargo-nextest" /usr/local/bin/cargo-nextest
+  if curl -fsSL -o "${tmp}/${asset}.tar.gz" "${url}" \
+     && curl -fsSL -o "${tmp}/${asset}.tar.gz.sha256" "${url}.sha256" \
+     && (cd "${tmp}" && sha256sum -c --status "${asset}.tar.gz.sha256") \
+     && tar -C "${tmp}" -xzf "${tmp}/${asset}.tar.gz" "${asset}/rg" \
+     && [ -x "${tmp}/${asset}/rg" ]; then
+    install -m 0755 "${tmp}/${asset}/rg" /usr/local/bin/rg
   else
-    warn "cargo-nextest install failed (is get.nexte.st on the allowlist?)"
+    warn "ripgrep ${ver} install failed"
   fi
   rm -rf "${tmp}"
+}
+
+# ShellCheck: the latest release, which upstream also publishes under the
+# fixed `stable` tag, so no version lookup is needed. Installed to
+# /usr/local/bin, ahead of the image's older apt copy in /usr/bin.
+install_shellcheck() {
+  log "shellcheck (latest stable release)"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/shellcheck.tar.xz" \
+       https://github.com/koalaman/shellcheck/releases/download/stable/shellcheck-stable.linux.x86_64.tar.xz \
+     && tar -C "${tmp}" -xJf "${tmp}/shellcheck.tar.xz" shellcheck-stable/shellcheck \
+     && [ -x "${tmp}/shellcheck-stable/shellcheck" ]; then
+    install -m 0755 "${tmp}/shellcheck-stable/shellcheck" /usr/local/bin/shellcheck
+  else
+    warn "shellcheck install failed"
+  fi
+  rm -rf "${tmp}"
+}
+
+# Latest stable CPython (or PYTHON_VERSION, e.g. 3.13), installed by uv and
+# made the default `python` / `python3` via links in ~/.local/bin, which is
+# first on the session PATH. /usr/bin/python3 and /usr/local/bin/python3 (the
+# image's 3.11) stay put, so apt and the image's pip-installed CLIs keep their
+# interpreter. Needs the freshly upgraded uv: each uv release only knows the
+# Pythons out at the time. The version is named explicitly because a bare
+# `uv python install` is satisfied by any Python already installed.
+install_python() {
+  command -v uv >/dev/null 2>&1 || { warn "uv not found; skipping latest Python"; return; }
+  local ver="${PYTHON_VERSION:-}"
+  if [ -z "${ver}" ]; then
+    ver="$(uv python list --only-downloads --output-format json 2>/dev/null \
+      | jq -r '[.[] | select(.implementation == "cpython" and .variant == "default"
+                             and (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))][0].version')"
+  fi
+  case "${ver}" in
+    3.*) ;;
+    *) warn "latest Python install failed (could not resolve a version)"; return ;;
+  esac
+  log "Python ${ver} (via uv, set as default python3)"
+  uv python install --default --preview-features python-install-default "${ver}" \
+    || warn "Python ${ver} install failed"
+}
+
+# Rust: nightly is the default toolchain. The image ships only stable, so
+# install the latest nightly with rustfmt/clippy/rust-analyzer/rust-src and make
+# it rustup's default; a repo's rust-toolchain.toml still overrides it. When a
+# component is missing from today's nightly, rustup falls back to the newest
+# nightly that has them all. Nightly moves daily and the snapshot is rebuilt
+# roughly weekly, so it can be a few days old in a session; `rustup update
+# nightly` refreshes it. The image's stable stays installed but isn't updated.
+# rustup reads static.rust-lang.org (Trusted), not GitHub.
+install_rust() {
+  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust nightly"; return; }
+  log "Rust nightly (latest, set as default)"
+  rustup toolchain install nightly --profile minimal --no-self-update \
+    -c rustfmt -c clippy -c rust-analyzer -c rust-src \
+    || { warn "Rust nightly install failed"; return; }
+  rustup default nightly || warn "could not make Rust nightly the default"
+}
+
+# Node.js. The image ships Node 20/21/22 under /opt/nodeNN with 22 on PATH, and
+# those trees also hold the image's global CLIs (claude, pnpm, eslint, ...), so
+# they are never touched. Install the latest Current release (or NODE_VERSION:
+# `lts`, or a major such as 24) from nodejs.org, which is on the Trusted list,
+# into its own /opt/node-v<version>, and link node/npm/npx/corepack into
+# ~/.local/bin (ahead of /opt/node22/bin on the session PATH) and
+# /usr/local/bin. The version comes from nodejs.org's static release index, not
+# a rate-limited API. Global CLIs belong in `bun add -g` (~/.bun/bin is on
+# PATH); `npm i -g` would land in /opt/node-v<version>/bin.
+install_node() {
+  command -v jq >/dev/null 2>&1 || { warn "jq not found; skipping Node.js"; return; }
+  local sel="${NODE_VERSION:-current}" filter
+  case "${sel}" in
+    lts)            filter='[.[] | select(.lts != false)][0].version' ;;
+    current|latest) filter='.[0].version' ;;
+    *)              filter="[.[] | select(.version | startswith(\"v${sel#v}.\"))][0].version" ;;
+  esac
+  local ver
+  ver="$(curl -fsSL https://nodejs.org/dist/index.json | jq -r "${filter}")"
+  case "${ver}" in
+    v[0-9]*) ;;
+    *) warn "Node.js install failed (could not resolve NODE_VERSION=${sel})"; return ;;
+  esac
+  local dest="/opt/node-${ver}"
+  if [ "$("${dest}/bin/node" --version 2>/dev/null)" = "${ver}" ]; then
+    log "Node.js ${ver} already present"
+  else
+    log "Node.js ${ver} -> ${dest}"
+    local base="https://nodejs.org/dist/${ver}" tarball="node-${ver}-linux-x64.tar.xz"
+    local tmp
+    tmp="$(mktemp -d)"
+    if curl -fsSL -o "${tmp}/${tarball}" "${base}/${tarball}" \
+       && curl -fsSL -o "${tmp}/SHASUMS256.txt" "${base}/SHASUMS256.txt" \
+       && (cd "${tmp}" && grep " ${tarball}\$" SHASUMS256.txt | sha256sum -c --status) \
+       && tar -C "${tmp}" -xJf "${tmp}/${tarball}"; then
+      mv "${tmp}/node-${ver}-linux-x64" "${dest}"
+    else
+      warn "Node.js ${ver} download failed"
+    fi
+    rm -rf "${tmp}"
+  fi
+  [ -x "${dest}/bin/node" ] || return 0
+  local bin dir
+  for dir in "${HOME}/.local/bin" /usr/local/bin; do
+    mkdir -p "${dir}"
+    for bin in node npm npx corepack; do
+      [ -e "${dest}/bin/${bin}" ] && ln -sfn "${dest}/bin/${bin}" "${dir}/${bin}"
+    done
+  done
+  return 0
 }
 
 install_cargo_binstall() {
@@ -169,32 +306,6 @@ install_cargo_binstall() {
   # Surface it on the system PATH (it installs into $CARGO_HOME/bin by default).
   [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/cargo-binstall" ] \
     && ln -sf "${CARGO_HOME:-$HOME/.cargo}/bin/cargo-binstall" /usr/local/bin/cargo-binstall
-}
-
-# garlic CLI (justanotherspy/garlic): tracks active coding time with Claude Code
-# and nudges breaks. Pulls the prebuilt binary straight from the GitHub release
-# (a cargo-dist tarball; github.com release assets are on the Trusted list) --
-# faster and more reliable than `cargo binstall`, which can fall back to a slow
-# from-source build. The asset name is version-independent, so latest/download
-# resolves without an api.github.com lookup; set GARLIC_VERSION (e.g. v0.3.3) to
-# pin a specific release.
-install_garlic() {
-  command -v garlic >/dev/null 2>&1 && { log "garlic CLI already present"; return; }
-  log "garlic CLI (justanotherspy/garlic)"
-  local base="https://github.com/justanotherspy/garlic/releases"
-  local url="${base}/latest/download/garlic-x86_64-unknown-linux-gnu.tar.gz"
-  [ -n "${GARLIC_VERSION:-}" ] \
-    && url="${base}/download/${GARLIC_VERSION}/garlic-x86_64-unknown-linux-gnu.tar.gz"
-  local tmp
-  tmp="$(mktemp -d)"
-  if curl -fsSL -o "${tmp}/garlic.tar.gz" "${url}" \
-     && tar -C "${tmp}" -xzf "${tmp}/garlic.tar.gz" garlic \
-     && [ -x "${tmp}/garlic" ]; then
-    install -m 0755 "${tmp}/garlic" /usr/local/bin/garlic
-  else
-    warn "garlic install failed"
-  fi
-  rm -rf "${tmp}"
 }
 
 # zizmor (zizmorcore/zizmor): static analysis for GitHub Actions workflows.
@@ -387,25 +498,6 @@ install_fly() {
     || warn "flyctl install failed (is fly.io on the allowlist?)"
 }
 
-install_sprite() {
-  command -v sprite >/dev/null 2>&1 && { log "sprite CLI already present"; return; }
-  log "sprite CLI"
-  curl -fsSL https://sprites.dev/install.sh | sh \
-    || warn "sprite CLI install failed (are sprites.dev + sprites-binaries.t3.storage.dev allowlisted?)"
-}
-
-install_sproot() {
-  log "sproot (justanotherspy/sproot)"
-  curl -fsSL https://raw.githubusercontent.com/justanotherspy/sproot/main/install.sh | sh \
-    || warn "sproot install failed"
-}
-
-install_shuck() {
-  log "shuck (justanotherspy/shuck)"
-  curl -fsSL https://raw.githubusercontent.com/justanotherspy/shuck/main/install.sh | bash \
-    || warn "shuck install failed"
-}
-
 # --- Docker image development tooling -------------------------------------
 # Docker itself ships in the base image; these add the tools for *authoring*
 # and inspecting images. All three pull prebuilt binaries from GitHub release
@@ -569,14 +661,19 @@ install_precommit() {
 # independent downloads in parallel and wait for all of them.
 install_apt
 
-install_semgrep &
+# Upgrade uv before anything uses it, so the Python it installs and the tools
+# below all come from the latest uv.
+install_uv
+
+# Latest Python first, then the uv-installed tools, in sequence so the tools
+# don't race the new default interpreter.
+( install_python; install_semgrep; install_precommit ) &
+# Node and bun before corepack, which bun installs and which runs on node.
+( install_node; install_bun; install_corepack ) &
+install_rust &
 install_fly &
-install_sprite &
-install_sproot &
-install_shuck &
-install_garlic &
-install_uv &
-install_bun &
+install_ripgrep &
+install_shellcheck &
 # Docker image development tools (all from GitHub, independent downloads).
 install_hadolint &
 install_dive &
@@ -590,14 +687,9 @@ install_trufflehog &
 install_actionlint &
 install_golangci_lint &
 install_zizmor &
-install_precommit &
-install_cargo_nextest &
-# cargo-binstall no longer has any in-script consumers (garlic and zizmor now
-# pull their binaries straight from GitHub releases), but we still install it so
-# sessions can `cargo binstall` further cargo tools as prebuilt binaries.
+# cargo-binstall has no in-script consumers; it is installed so sessions can
+# `cargo binstall` further cargo tools as prebuilt binaries.
 install_cargo_binstall &
-# Rust nightly (rust-toolchain.toml repos) alongside the image's stable.
-install_rust_nightly &
 # Go toolchain upgrade and the Go tools must run in sequence (the tools build
 # against the new toolchain, and we must not swap /usr/local/go while a build
 # is reading it); the pair runs in parallel with everything else.
@@ -608,13 +700,20 @@ wait
 # failed step is easy to spot in the setup logs without scrolling for its
 # warning. Informational only: it never fails the script.
 missing=()
-for tool in gh shellcheck skopeo semgrep pre-commit uv bun go golangci-lint \
-            goimports staticcheck gopls cargo-binstall cargo-nextest garlic \
-            fly sprite sproot shuck hadolint dive trivy crane cosign syft \
+for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node corepack go golangci-lint \
+            goimports staticcheck gopls cargo-binstall fly hadolint dive \
+            trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
 done
-rustup toolchain list 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
+# The upgraded tools shadow image copies that always pass the check above, so
+# also confirm each upgrade landed where the session will find it first.
+for path in /usr/local/bin/rg /usr/local/bin/shellcheck \
+            "${HOME}/.local/bin/python3" "${HOME}/.local/bin/node" \
+            "${HOME}/.local/bin/corepack"; do
+  [ -x "${path}" ] || missing+=("${path}")
+done
+rustup default 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
 if [ "${#missing[@]}" -gt 0 ]; then
   warn "missing after setup: ${missing[*]}"
 fi
