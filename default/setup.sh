@@ -128,6 +128,29 @@ install_bun() {
   [ -e /usr/local/bin/bun ] || ln -s "${root}/bin/bun" /usr/local/bin/bun
 }
 
+# corepack (pnpm/yarn version manager). Node 25+ no longer bundles it, so
+# install it globally with bun (falling back to npm), after the new Node and
+# bun are in place since its shim runs on `node`. bun's global bin (~/.bun/bin)
+# sits behind the image's /opt/node22/bin on the session PATH, whose older
+# corepack would otherwise win, so link it into ~/.local/bin and /usr/local/bin
+# like node itself. `corepack enable` is left to projects that want it.
+install_corepack() {
+  log "corepack (via bun)"
+  local bin=""
+  if command -v bun >/dev/null 2>&1 && bun add -g corepack; then
+    bin="$(bun pm bin -g 2>/dev/null)/corepack"
+  fi
+  if [ ! -x "${bin}" ] && command -v npm >/dev/null 2>&1; then
+    warn "bun could not install corepack; trying npm"
+    npm install -g corepack >/dev/null && bin="$(npm prefix -g)/bin/corepack"
+  fi
+  [ -x "${bin}" ] || { warn "corepack install failed"; return; }
+  local dir
+  for dir in "${HOME}/.local/bin" /usr/local/bin; do
+    mkdir -p "${dir}" && ln -sfn "${bin}" "${dir}/corepack"
+  done
+}
+
 # ripgrep: the image's apt copy (/usr/bin/rg) lags, and Claude Code searches
 # with the system rg here, so install the latest release to /usr/local/bin,
 # which comes first on PATH. The release asset name embeds the version, and
@@ -645,8 +668,8 @@ install_uv
 # Latest Python first, then the uv-installed tools, in sequence so the tools
 # don't race the new default interpreter.
 ( install_python; install_semgrep; install_precommit ) &
-install_bun &
-install_node &
+# Node and bun before corepack, which bun installs and which runs on node.
+( install_node; install_bun; install_corepack ) &
 install_rust &
 install_fly &
 install_ripgrep &
@@ -677,7 +700,7 @@ wait
 # failed step is easy to spot in the setup logs without scrolling for its
 # warning. Informational only: it never fails the script.
 missing=()
-for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node go golangci-lint \
+for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node corepack go golangci-lint \
             goimports staticcheck gopls cargo-binstall fly hadolint dive \
             trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do

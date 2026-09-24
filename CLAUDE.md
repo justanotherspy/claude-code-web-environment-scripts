@@ -52,7 +52,9 @@ shape every edit — they are easy to violate and break session startup:
   `cargo-binstall`.
 - **Prefer uv and bun.** Python CLIs go through `install_python_tool` (uv);
   global JS CLIs go through `bun add -g` rather than `npm i -g`, whose global bin
-  dir isn't on PATH. Upgrade uv and bun by re-running their installers:
+  dir isn't on PATH (`corepack` is installed this way, since Node 25+ dropped
+  it). `~/.bun/bin` comes after the image's `/opt/node22/bin` on PATH, so link a
+  CLI into `~/.local/bin` when the image's Node ships an older copy of it. Upgrade uv and bun by re-running their installers:
   `uv self update` and `bun upgrade` resolve versions through `api.github.com`.
 - **Don't repoint the image's interpreters.** The new Python and Node become
   defaults via links in `~/.local/bin` (first on the session PATH).

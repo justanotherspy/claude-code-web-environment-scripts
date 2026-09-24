@@ -105,6 +105,7 @@ On top of the pre-installed image, in parallel:
 | `bun`            | `bun.sh/install`                         | Upgraded in place to the latest release; use `bun add -g` for global JS CLIs — **needs non-default domains** |
 | Python           | `uv python install` (GitHub release assets) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
 | Node.js          | `nodejs.org/dist`                        | Latest Current release (or `NODE_VERSION`) in `/opt/node<major>`, made the default `node`/`npm` |
+| `corepack`       | `bun add -g` (npm registry)              | pnpm/yarn version manager; Node 25+ no longer bundles it. Falls back to `npm i -g` |
 | Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Latest nightly with rustfmt/clippy/rust-analyzer/rust-src, set as rustup's **default** toolchain |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
 | `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
@@ -132,7 +133,9 @@ image's pip-installed CLIs (`pytest`, `black`, `mypy`, `ruff`) keep working. Tho
 CLIs aren't installed for the new Python, so `python3 -m pytest` fails where
 `pytest` works; prefer `uv run` / `uvx` in projects. Likewise `npm i -g` lands
 in `/opt/node<major>/bin`, which isn't on PATH, so install global JS CLIs with
-`bun add -g` (`~/.bun/bin` is on PATH).
+`bun add -g` (`~/.bun/bin` is on PATH, though after the image's
+`/opt/node22/bin`, which is why the script links `corepack` into `~/.local/bin`
+as well).
 
 `uv` and `bun` are upgraded by re-running their installers rather than
 `uv self update` / `bun upgrade`, which both ask `api.github.com` for the latest
