@@ -109,7 +109,7 @@ On top of the pre-installed image, in parallel:
 | `corepack`       | `bun add -g` (npm registry)              | pnpm/yarn version manager; Node 25+ no longer bundles it. Falls back to `npm i -g` |
 | Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Latest nightly with rustfmt/clippy/rust-analyzer/rust-src, set as rustup's **default** toolchain |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
-| `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
+| `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary), upgraded over the image's older copy; falls back to `golangci-lint.run/install.sh` |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
 | `staticcheck`    | `go install` (proxy.golang.org)          | Go static analysis                                   |
 | `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
@@ -119,7 +119,7 @@ On top of the pre-installed image, in parallel:
 | `dive`           | GitHub releases (`wagoodman/dive`)       | Inspect image layers / find wasted space             |
 | `trivy`          | GitHub (`aquasecurity/trivy` install.sh) | Scan images, filesystems & Dockerfiles for vulns/misconfigs |
 | `crane`          | GitHub releases (`google/go-containerregistry`) | Copy/inspect images, resolve tags to digests  |
-| `cosign`         | GitHub releases (`sigstore/cosign`)      | Sign / verify images & artifacts (static binary)     |
+| `cosign`         | GitHub releases (tag via `proxy.golang.org`) | Sign / verify images & artifacts (static binary)     |
 | `syft`           | GitHub (`anchore/syft` install.sh)       | Generate SBOMs from images & filesystems             |
 | `goreleaser`     | GitHub releases (`goreleaser/goreleaser`) | Build & publish release artifacts                   |
 | `trufflehog`     | GitHub (`trufflesecurity/trufflehog` install.sh) | Scan for verified secrets                    |
@@ -128,7 +128,9 @@ On top of the pre-installed image, in parallel:
 | `pre-commit`     | PyPI (`uv tool install`)                 | Git hook framework (drives `make hooks`), in its own virtualenv |
 
 The upgraded Python and Node become the defaults through links in `~/.local/bin`,
-which is first on the session PATH. The image's own interpreters stay in place:
+which the script puts first on the session PATH via `/etc/profile.d/zz-local-bin.sh`
+(also hooked into `/etc/bash.bashrc`); without it the image's
+`/etc/profile.d/nodejs.sh` puts `/opt/node22/bin` first and `node` stays on v22. The image's own interpreters stay in place:
 `/usr/bin/python3` and `/usr/local/bin/python3` are still 3.11, so `apt` keeps
 working, and the image's Python CLIs (`pytest`, `black`, `mypy`, `ruff`, which
 are uv tools with their own interpreters) are unaffected. What changes for bare

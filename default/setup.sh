@@ -296,6 +296,32 @@ install_node() {
   return 0
 }
 
+# The upgraded Python and Node are linked into ~/.local/bin, but the image's
+# /etc/profile.d/nodejs.sh prepends /opt/node22/bin, so without this `node`
+# still resolves to the image's v22. profile.d runs in name order and each
+# snippet prepends, so a zz- name puts ~/.local/bin first. Also hooked into
+# /etc/bash.bashrc for non-login shells, like go-path.sh.
+configure_local_bin_path() {
+  log "PATH (put ~/.local/bin first so the upgraded python3/node win)"
+  cat > /etc/profile.d/zz-local-bin.sh <<'EOF'
+# Put ~/.local/bin (upgraded python3 / node links) ahead of the image's
+# /opt/node22/bin. Managed by the Claude Code on the web setup script.
+case ":${PATH}:" in
+  ":${HOME}/.local/bin:"*) ;;
+  *) export PATH="${HOME}/.local/bin:${PATH}" ;;
+esac
+EOF
+  chmod 0644 /etc/profile.d/zz-local-bin.sh \
+    || warn "could not write /etc/profile.d/zz-local-bin.sh"
+  if ! grep -q 'profile\.d/zz-local-bin\.sh' /etc/bash.bashrc 2>/dev/null; then
+    {
+      printf '%s\n' '[ -f /etc/profile.d/zz-local-bin.sh ] && . /etc/profile.d/zz-local-bin.sh' \
+        | cat - /etc/bash.bashrc > /etc/bash.bashrc.local-bin \
+        && mv /etc/bash.bashrc.local-bin /etc/bash.bashrc
+    } || warn "could not hook zz-local-bin.sh into /etc/bash.bashrc"
+  fi
+}
+
 install_cargo_binstall() {
   command -v cargo >/dev/null 2>&1 || { warn "cargo not found; skipping cargo-binstall"; return; }
   command -v cargo-binstall >/dev/null 2>&1 && { log "cargo-binstall already present"; return; }
@@ -363,11 +389,19 @@ install_go() {
 # IPs the same way api.github.com does. So the tag comes from the Go module
 # proxy (Trusted, not rate-limited) and the tarball straight from the release
 # asset URL. If either step fails, fall back to the official installer.
+#
+# The image ships an older golangci-lint, so compare versions rather than
+# skipping whenever one is on PATH.
 install_golangci_lint() {
-  command -v golangci-lint >/dev/null 2>&1 && { log "golangci-lint already present"; return; }
-  log "golangci-lint (Go linter)"
-  local ver tmp
-  ver="$(curl -fsSL https://proxy.golang.org/github.com/golangci/golangci-lint/v2/@latest          | sed -nE 's#.*"Version":"v([^"]+)".*#\1#p')"
+  local ver tmp have
+  ver="$(curl -fsSL https://proxy.golang.org/github.com/golangci/golangci-lint/v2/@latest \
+    | sed -nE 's#.*"Version":"v([^"]+)".*#\1#p')"
+  have="$(golangci-lint --version 2>/dev/null | sed -nE 's#.* version ([0-9][^ ]*).*#\1#p')"
+  if [ -n "${have}" ] && { [ -z "${ver}" ] || [ "${have}" = "${ver}" ]; }; then
+    log "golangci-lint ${have} already present"
+    return
+  fi
+  log "golangci-lint ${ver:-latest} (Go linter)"
   tmp="$(mktemp -d)"
   local name="golangci-lint-${ver}-linux-amd64"
   if [ -n "${ver}" ] \
@@ -588,17 +622,29 @@ install_crane() {
   rm -rf "${tmp}"
 }
 
-# cosign: sign/verify container images and other artifacts (sigstore). Ships as
-# a single static binary under the stable latest/download path, like hadolint.
+# cosign: sign/verify container images and other artifacts (sigstore). A single
+# static binary. The tag comes from the Go module proxy rather than the
+# releases/latest redirect, which 403s intermittently on shared build IPs (cosign
+# went missing from a snapshot that way). Downloads to a temp file so a failed
+# transfer never leaves a truncated binary on PATH.
 install_cosign() {
   command -v cosign >/dev/null 2>&1 && { log "cosign already present"; return; }
   log "cosign (artifact signing, sigstore)"
-  if curl -fsSL -o /usr/local/bin/cosign \
-       "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"; then
-    chmod +x /usr/local/bin/cosign
+  local ver tmp url
+  ver="$(curl -fsSL https://proxy.golang.org/github.com/sigstore/cosign/v3/@latest \
+    | sed -nE 's#.*"Version":"(v[^"]+)".*#\1#p')"
+  if [ -n "${ver}" ]; then
+    url="https://github.com/sigstore/cosign/releases/download/${ver}/cosign-linux-amd64"
+  else
+    url="https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+  fi
+  tmp="$(mktemp)"
+  if curl -fsSL -o "${tmp}" "${url}" && [ -s "${tmp}" ]; then
+    install -m 0755 "${tmp}" /usr/local/bin/cosign
   else
     warn "cosign install failed"
   fi
+  rm -f "${tmp}"
 }
 
 # syft: generate SBOMs from images and filesystems (anchore). Its installer
@@ -660,6 +706,7 @@ install_precommit() {
 # apt holds the dpkg lock, so run it to completion first, then fan out the
 # independent downloads in parallel and wait for all of them.
 install_apt
+configure_local_bin_path
 
 # Upgrade uv before anything uses it, so the Python it installs and the tools
 # below all come from the latest uv.
@@ -714,6 +761,9 @@ for path in /usr/local/bin/rg /usr/local/bin/shellcheck \
   [ -x "${path}" ] || missing+=("${path}")
 done
 rustup default 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
+# The links above can exist yet be shadowed by the image's /opt/node22/bin.
+[ "$(bash -lc 'command -v node' 2>/dev/null)" = "${HOME}/.local/bin/node" ] \
+  || missing+=("local-bin-first-on-PATH")
 if [ "${#missing[@]}" -gt 0 ]; then
   warn "missing after setup: ${missing[*]}"
 fi
