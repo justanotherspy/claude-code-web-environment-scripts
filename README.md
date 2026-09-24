@@ -74,9 +74,11 @@ that should run everywhere, like `npm install` — and gate it on
    that isn't allowlisted will fail (see [Network access](#network-access)).
 6. **Non-interactive apt:** `export DEBIAN_FRONTEND=noninteractive` and pass
    `-y`.
-7. **Secrets:** there is no secrets store. Env vars and the script are visible to
-   anyone who can edit the environment — don't hardcode credentials. For private
-   `gh` operations, add a `GH_TOKEN` env var.
+7. **Secrets:** never hardcode credentials in the script. Put tokens in the
+   environment's **API credentials** section where it's offered; plain env vars
+   and the script are visible to anyone who can edit the environment. See
+   [`default/credentials.example`](default/credentials.example) for the tokens
+   the installed CLIs read (`GH_TOKEN`, `FLY_API_TOKEN`, `SPRITES_TOKEN`).
 8. **Big/slow downloads:** if a single download won't fit in ~5 minutes, move it
    to a SessionStart hook that backgrounds it, or pre-pull Docker images in the
    script so the layers land in the cache.
@@ -292,7 +294,11 @@ this repo is the source of truth for the script's contents. To apply it:
    it down instead, pick **Custom** and add the
    [allowlist above](#network-access), keeping default package managers enabled.
 4. Optionally add environment variables (`.env` format, one `KEY=value` per
-   line, no quotes), e.g. `GH_TOKEN`, `SPROOT_VERSION`, `SETUP_DEBUG=1`.
+   line, no quotes). [`default/.env.example`](default/.env.example) lists every
+   variable the script reads (`SETUP_DEBUG` and the version pins).
+5. Optionally add tokens under **API credentials** (or as env vars if that
+   section isn't offered), using
+   [`default/credentials.example`](default/credentials.example) as the template.
 
 ## Debugging
 
