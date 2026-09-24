@@ -295,7 +295,8 @@ this repo is the source of truth for the script's contents. To apply it:
    [allowlist above](#network-access), keeping default package managers enabled.
 4. Optionally add environment variables (`.env` format, one `KEY=value` per
    line, no quotes). [`default/.env.example`](default/.env.example) lists every
-   variable the script reads (`SETUP_DEBUG` and the version pins).
+   variable the script reads (`SETUP_DEBUG` and the version pins), recommended
+   settings for the installed CLIs, and the variables to leave alone.
 5. Optionally add tokens under **API credentials** (or as env vars if that
    section isn't offered), using
    [`default/credentials.example`](default/credentials.example) as the template.
