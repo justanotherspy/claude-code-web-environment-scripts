@@ -28,13 +28,14 @@
 # the cache, so switching to Full already re-runs this script.
 #
 # If you move the environment back to "Trusted", these steps still work
-# (apt, PyPI, GitHub, githubusercontent, crates.io, the Go module proxy):
-# gh, shellcheck, unzip, skopeo, semgrep, pre-commit, zizmor, cargo-binstall,
-# golangci-lint, goimports, staticcheck, gopls, hadolint, dive, trivy, crane,
-# cosign, syft, goreleaser, trufflehog and actionlint. These fetch from hosts
-# NOT on the Trusted list and need "Custom" access (default package managers
-# enabled) plus the README's allowlist:
-#     uv          -> astral.sh / *.astral.sh
+# (apt, PyPI, npm, GitHub, githubusercontent, crates.io, the Go module proxy,
+# static.rust-lang.org, nodejs.org): gh, shellcheck, ripgrep, unzip, skopeo,
+# semgrep, pre-commit, zizmor, cargo-binstall, golangci-lint, goimports,
+# staticcheck, gopls, hadolint, dive, trivy, crane, cosign, syft, goreleaser,
+# trufflehog, actionlint, Rust nightly, Node.js and corepack. These fetch from
+# hosts NOT on the Trusted list and need "Custom" access (default package
+# managers enabled) plus the README's allowlist:
+#     uv, Python  -> astral.sh / *.astral.sh (Python from releases.astral.sh)
 #     bun         -> bun.sh / *.bun.sh
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
@@ -223,7 +224,6 @@ install_python() {
   esac
   log "Python ${ver} (via uv, set as default python3)"
   uv python install --default --preview-features python-install-default "${ver}" \
-    || uv python install --default "${ver}" \
     || warn "Python ${ver} install failed"
 }
 
@@ -238,19 +238,21 @@ install_python() {
 install_rust() {
   command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust nightly"; return; }
   log "Rust nightly (latest, set as default)"
-  rustup toolchain install nightly --profile minimal \
+  rustup toolchain install nightly --profile minimal --no-self-update \
     -c rustfmt -c clippy -c rust-analyzer -c rust-src \
     || { warn "Rust nightly install failed"; return; }
   rustup default nightly || warn "could not make Rust nightly the default"
 }
 
-# Node.js. The image ships Node 20/21/22 under /opt/nodeNN with 22 on PATH.
-# Install the latest Current release (or NODE_VERSION: `lts`, or a major such as 24)
-# from nodejs.org, which is on the Trusted list, as /opt/node<major>, and link
-# node/npm/npx/corepack into ~/.local/bin (ahead of /opt/node22/bin on the
-# session PATH) and /usr/local/bin. The version comes from nodejs.org's static
-# release index, not a rate-limited API. Global CLIs belong in `bun add -g`
-# (~/.bun/bin is on PATH); `npm i -g` would land in /opt/node<major>/bin.
+# Node.js. The image ships Node 20/21/22 under /opt/nodeNN with 22 on PATH, and
+# those trees also hold the image's global CLIs (claude, pnpm, eslint, ...), so
+# they are never touched. Install the latest Current release (or NODE_VERSION:
+# `lts`, or a major such as 24) from nodejs.org, which is on the Trusted list,
+# into its own /opt/node-v<version>, and link node/npm/npx/corepack into
+# ~/.local/bin (ahead of /opt/node22/bin on the session PATH) and
+# /usr/local/bin. The version comes from nodejs.org's static release index, not
+# a rate-limited API. Global CLIs belong in `bun add -g` (~/.bun/bin is on
+# PATH); `npm i -g` would land in /opt/node-v<version>/bin.
 install_node() {
   command -v jq >/dev/null 2>&1 || { warn "jq not found; skipping Node.js"; return; }
   local sel="${NODE_VERSION:-current}" filter
@@ -265,9 +267,7 @@ install_node() {
     v[0-9]*) ;;
     *) warn "Node.js install failed (could not resolve NODE_VERSION=${sel})"; return ;;
   esac
-  local major="${ver#v}"
-  major="${major%%.*}"
-  local dest="/opt/node${major}"
+  local dest="/opt/node-${ver}"
   if [ "$("${dest}/bin/node" --version 2>/dev/null)" = "${ver}" ]; then
     log "Node.js ${ver} already present"
   else
@@ -279,7 +279,7 @@ install_node() {
        && curl -fsSL -o "${tmp}/SHASUMS256.txt" "${base}/SHASUMS256.txt" \
        && (cd "${tmp}" && grep " ${tarball}\$" SHASUMS256.txt | sha256sum -c --status) \
        && tar -C "${tmp}" -xJf "${tmp}/${tarball}"; then
-      rm -rf "${dest}" && mv "${tmp}/node-${ver}-linux-x64" "${dest}"
+      mv "${tmp}/node-${ver}-linux-x64" "${dest}"
     else
       warn "Node.js ${ver} download failed"
     fi
@@ -705,6 +705,13 @@ for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node corepack go g
             trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
+done
+# The upgraded tools shadow image copies that always pass the check above, so
+# also confirm each upgrade landed where the session will find it first.
+for path in /usr/local/bin/rg /usr/local/bin/shellcheck \
+            "${HOME}/.local/bin/python3" "${HOME}/.local/bin/node" \
+            "${HOME}/.local/bin/corepack"; do
+  [ -x "${path}" ] || missing+=("${path}")
 done
 rustup default 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
 if [ "${#missing[@]}" -gt 0 ]; then

@@ -59,7 +59,9 @@ shape every edit — they are easy to violate and break session startup:
 - **Don't repoint the image's interpreters.** The new Python and Node become
   defaults via links in `~/.local/bin` (first on the session PATH).
   `/usr/bin/python3` and `/usr/local/bin/python3` stay on the image's Python so
-  apt and its pip-installed CLIs keep working.
+  apt keeps working. Node installs into its own `/opt/node-v<version>`: never
+  delete or overwrite the image's `/opt/node20-22`, which hold its global CLIs
+  (including the `claude` link).
 - **Toolchains, not just CLIs.** The Go repos' `go.mod` sits on the current
   release, which the base image's Go lags, so the upgraded toolchain belongs in
   the snapshot, not in a per-session download.
@@ -85,7 +87,8 @@ shape every edit — they are easy to violate and break session startup:
   fan out with `&` and a single `wait`.
 - **The snapshot captures files, not processes.** Don't expect to start
   long-running services here; they won't survive into sessions.
-- **Make steps idempotent**, typically guarded with `command -v <tool>`.
+- **Make steps idempotent**, typically guarded with `command -v <tool>`, or a
+  version check for upgrades.
 
 ## Network allowlist coupling
 
@@ -95,9 +98,12 @@ to Trusted or Custom, so keep the README allowlist accurate anyway:
 
 - Under the default **Trusted** level these work (apt / PyPI / GitHub /
   githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
-  `semgrep`, `zizmor`, `cargo-binstall`, `golangci-lint`, and the
-  `go install` tools (`goimports`, `staticcheck`, `gopls`).
-- `uv` (`astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
+  `semgrep`, `ripgrep` (crates.io + GitHub), `zizmor`, `cargo-binstall`,
+  `golangci-lint`, the `go install` tools (`goimports`, `staticcheck`,
+  `gopls`), Rust nightly (`static.rust-lang.org`), Node.js (`nodejs.org`) and
+  `corepack` (npm registry).
+- `uv` and the Python upgrade (`astral.sh`; uv downloads Python from
+  `releases.astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
   (`go.dev/dl` redirects to `dl.google.com`), and `flyctl` download
   from hosts **not** on the Trusted list, so the environment must use **Custom**
   access (with default package managers still enabled) plus the allowlist

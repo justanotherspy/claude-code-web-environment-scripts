@@ -71,9 +71,10 @@ that should run everywhere, like `npm install` — and gate it on
 2. **Stay under ~5 minutes** so the cache can build. Run independent installs in
    parallel with `&` and `wait`.
 3. **Only install what's missing.** The base image is rich; check before adding.
-   Upgrade a pre-installed toolchain only when you need a newer version.
-4. **Make steps idempotent** — guard with `command -v <tool>` so re-runs and
-   SessionStart parity are cheap.
+   Upgrade a pre-installed toolchain only when you need a newer version (this
+   script does so for Go, Rust, Python, Node, uv, bun, ripgrep and ShellCheck).
+4. **Make steps idempotent** — guard with `command -v <tool>` (or, for an
+   upgrade, a version check) so re-runs and SessionStart parity are cheap.
 5. **Match installs to your network level.** Installs fetch over the wire; a host
    that isn't allowlisted will fail (see [Network access](#network-access)).
 6. **Non-interactive apt:** `export DEBIAN_FRONTEND=noninteractive` and pass
@@ -103,8 +104,8 @@ On top of the pre-installed image, in parallel:
 | `semgrep`        | PyPI (`uv tool install`)                 | Static analysis, in its own virtualenv               |
 | `uv`             | `astral.sh/uv/install.sh`                | Upgraded in place to the latest release — **needs non-default domains** |
 | `bun`            | `bun.sh/install`                         | Upgraded in place to the latest release; use `bun add -g` for global JS CLIs — **needs non-default domains** |
-| Python           | `uv python install` (GitHub release assets) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
-| Node.js          | `nodejs.org/dist`                        | Latest Current release (or `NODE_VERSION`) in `/opt/node<major>`, made the default `node`/`npm` |
+| Python           | `uv python install` (`releases.astral.sh`) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
+| Node.js          | `nodejs.org/dist`                        | Latest Current release (or `NODE_VERSION`) in `/opt/node-v<version>` (the image's `/opt/node20-22` are left alone), made the default `node`/`npm` |
 | `corepack`       | `bun add -g` (npm registry)              | pnpm/yarn version manager; Node 25+ no longer bundles it. Falls back to `npm i -g` |
 | Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Latest nightly with rustfmt/clippy/rust-analyzer/rust-src, set as rustup's **default** toolchain |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
@@ -128,11 +129,20 @@ On top of the pre-installed image, in parallel:
 
 The upgraded Python and Node become the defaults through links in `~/.local/bin`,
 which is first on the session PATH. The image's own interpreters stay in place:
-`/usr/bin/python3` and `/usr/local/bin/python3` are still 3.11, so `apt` and the
-image's pip-installed CLIs (`pytest`, `black`, `mypy`, `ruff`) keep working. Those
-CLIs aren't installed for the new Python, so `python3 -m pytest` fails where
-`pytest` works; prefer `uv run` / `uvx` in projects. Likewise `npm i -g` lands
-in `/opt/node<major>/bin`, which isn't on PATH, so install global JS CLIs with
+`/usr/bin/python3` and `/usr/local/bin/python3` are still 3.11, so `apt` keeps
+working, and the image's Python CLIs (`pytest`, `black`, `mypy`, `ruff`, which
+are uv tools with their own interpreters) are unaffected. What changes for bare
+`python3`:
+
+- It sees none of the image's site-packages, so `python3 -m pytest` or
+  `import yaml` fail where `pytest` or `/usr/bin/python3` work.
+- `pip` is still the image's 3.11 `pip`, so `pip install foo` doesn't make
+  `foo` importable from `python3`.
+- uv marks its Pythons externally managed, so `python3 -m pip install` refuses.
+
+Use `uv run`, `uv pip` or `uvx` in projects, or `/usr/bin/python3` for the image's
+interpreter. Likewise `npm i -g` lands in `/opt/node-v<version>/bin`, which isn't
+on PATH, so install global JS CLIs with
 `bun add -g` (`~/.bun/bin` is on PATH, though after the image's
 `/opt/node22/bin`, which is why the script links `corepack` into `~/.local/bin`
 as well).
@@ -215,8 +225,9 @@ is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopl
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
 `trufflehog` and `actionlint` (all from GitHub release assets), and the
-toolchain upgrades for Rust nightly (`static.rust-lang.org`), Python (GitHub release
-assets via `uv`) and Node (`nodejs.org`).
+toolchain upgrades for Rust nightly (`static.rust-lang.org`) and Node
+(`nodejs.org`), plus `corepack` (npm registry). The Python upgrade is not: `uv`
+downloads it from `releases.astral.sh` (see the allowlist below).
 
 > **Avoid `api.github.com` in the script, even under Full access.** It *is* on
 > the Trusted list, but unauthenticated calls are rate-limited per IP and shared
@@ -245,7 +256,7 @@ environment uses **Custom** network access — *with the default package manager
 enabled* — plus the allowlist below. Without these domains the matching step
 logs a warning and is skipped:
 
-- `uv` → `astral.sh` / `*.astral.sh`
+- `uv` and Python → `astral.sh` / `*.astral.sh` (uv downloads Python from `releases.astral.sh`)
 - `bun` → `bun.sh` / `*.bun.sh`
 - `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
@@ -305,7 +316,7 @@ this repo is the source of truth for the script's contents. To apply it:
    it down instead, pick **Custom** and add the
    [allowlist above](#network-access), keeping default package managers enabled.
 4. Optionally add environment variables (`.env` format, one `KEY=value` per
-   line, no quotes). [`default/.env.example`](default/.env.example) lists every
+   line; quote a value that contains `#`). [`default/.env.example`](default/.env.example) lists every
    variable the script reads (`SETUP_DEBUG` and the version pins), recommended
    settings for the installed CLIs, and the variables to leave alone.
 5. Optionally add API keys under **API credentials** (Pro/Max, existing
