@@ -45,7 +45,9 @@ shape every edit — they are easy to violate and break session startup:
   Don't reinstall those. The deliberate exceptions: the script **upgrades** the
   Go (to `GO_VERSION`), Rust (latest **nightly**, set as rustup's default), Python (latest stable via
   `uv python install --default`) and Node (latest Current release from nodejs.org)
-  toolchains, and `uv` and `bun`, because the image's copies lag. The `gh` step
+  toolchains, `uv` and `bun`, and `ripgrep` and `shellcheck` (latest releases
+  into `/usr/local/bin`, ahead of the image's apt copies), because the image's
+  copies lag. The `gh` step
   stays a guarded no-op. Beyond that, add only tools the image lacks, such as
   `cargo-binstall`.
 - **Prefer uv and bun.** Python CLIs go through `install_python_tool` (uv);
@@ -65,7 +67,10 @@ shape every edit — they are easy to violate and break session startup:
   the snapshot (this is what happened to `dive`). Use a stable
   `/releases/latest/download/<asset>` URL, read the tag from the redirect
   `github.com/<owner>/<repo>/releases/latest` issues, or, for Go projects, read
-  it from `proxy.golang.org/<module>/@latest`, which isn't rate-limited.
+  it from `proxy.golang.org/<module>/@latest`, which isn't rate-limited. The
+  `/releases/latest` redirect 403s from sessions for repos not attached to
+  them, so prefer a registry that knows the version (ripgrep reads the
+  crates.io sparse index) or a fixed tag (ShellCheck's `stable` release).
 - **Download with the `curl` wrapper.** The script defines `curl()` with
   timeouts and retries so one stalled host can't blow the 5-minute budget;
   don't call `command curl` directly.

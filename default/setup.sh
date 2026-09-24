@@ -79,12 +79,13 @@ curl() {
     --retry 2 --retry-delay 2 "$@"
 }
 
-# Install the apt packages the image lacks. gh and shellcheck ship in the
-# current image, so normally only skopeo is fetched; each is still listed in
-# case the image drops it. unzip is required by the bun installer (it ships a
+# Install the apt packages the image lacks. gh ships in the current image, so
+# normally only skopeo is fetched; gh is still listed in case the image drops
+# it. shellcheck is not here: apt's copy lags, so install_shellcheck pulls the
+# latest release instead. unzip is required by the bun installer (it ships a
 # .zip). skopeo inspects and copies container images between registries.
 install_apt() {
-  local want=(gh:gh shellcheck:shellcheck unzip:unzip skopeo:skopeo)
+  local want=(gh:gh unzip:unzip skopeo:skopeo)
   local pkgs=() entry
   for entry in "${want[@]}"; do
     command -v "${entry%%:*}" >/dev/null 2>&1 || pkgs+=("${entry#*:}")
@@ -125,6 +126,57 @@ install_bun() {
     | env BUN_INSTALL="${root}" bash \
     || { warn "bun install/upgrade failed (is bun.sh on the allowlist, and is unzip present?)"; return; }
   [ -e /usr/local/bin/bun ] || ln -s "${root}/bin/bun" /usr/local/bin/bun
+}
+
+# ripgrep: the image's apt copy (/usr/bin/rg) lags, and Claude Code searches
+# with the system rg here, so install the latest release to /usr/local/bin,
+# which comes first on PATH. The release asset name embeds the version, and
+# GitHub's /releases/latest page 403s from sessions for repos not attached to
+# them, so read the version from the crates.io sparse index (Trusted, not
+# rate-limited) instead; ripgrep's crate version matches its release tag.
+install_ripgrep() {
+  command -v jq >/dev/null 2>&1 || { warn "jq not found; skipping ripgrep"; return; }
+  local ver
+  ver="$(curl -fsSL https://index.crates.io/ri/pg/ripgrep \
+    | jq -r 'select(.yanked == false) | .vers' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+  [ -n "${ver}" ] || { warn "ripgrep install failed (could not resolve latest version)"; return; }
+  if /usr/local/bin/rg --version 2>/dev/null | head -n 1 | grep -q "^ripgrep ${ver}\b"; then
+    log "ripgrep ${ver} already present"; return
+  fi
+  log "ripgrep ${ver}"
+  local asset="ripgrep-${ver}-x86_64-unknown-linux-musl"
+  local url="https://github.com/BurntSushi/ripgrep/releases/download/${ver}/${asset}.tar.gz"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/${asset}.tar.gz" "${url}" \
+     && curl -fsSL -o "${tmp}/${asset}.tar.gz.sha256" "${url}.sha256" \
+     && (cd "${tmp}" && sha256sum -c --status "${asset}.tar.gz.sha256") \
+     && tar -C "${tmp}" -xzf "${tmp}/${asset}.tar.gz" "${asset}/rg" \
+     && [ -x "${tmp}/${asset}/rg" ]; then
+    install -m 0755 "${tmp}/${asset}/rg" /usr/local/bin/rg
+  else
+    warn "ripgrep ${ver} install failed"
+  fi
+  rm -rf "${tmp}"
+}
+
+# ShellCheck: the latest release, which upstream also publishes under the
+# fixed `stable` tag, so no version lookup is needed. Installed to
+# /usr/local/bin, ahead of the image's older apt copy in /usr/bin.
+install_shellcheck() {
+  log "shellcheck (latest stable release)"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/shellcheck.tar.xz" \
+       https://github.com/koalaman/shellcheck/releases/download/stable/shellcheck-stable.linux.x86_64.tar.xz \
+     && tar -C "${tmp}" -xJf "${tmp}/shellcheck.tar.xz" shellcheck-stable/shellcheck \
+     && [ -x "${tmp}/shellcheck-stable/shellcheck" ]; then
+    install -m 0755 "${tmp}/shellcheck-stable/shellcheck" /usr/local/bin/shellcheck
+  else
+    warn "shellcheck install failed"
+  fi
+  rm -rf "${tmp}"
 }
 
 # Latest stable CPython (or PYTHON_VERSION, e.g. 3.13), installed by uv and
@@ -597,6 +649,8 @@ install_bun &
 install_node &
 install_rust &
 install_fly &
+install_ripgrep &
+install_shellcheck &
 # Docker image development tools (all from GitHub, independent downloads).
 install_hadolint &
 install_dive &
@@ -623,7 +677,7 @@ wait
 # failed step is easy to spot in the setup logs without scrolling for its
 # warning. Informational only: it never fails the script.
 missing=()
-for tool in gh shellcheck skopeo semgrep pre-commit uv bun node go golangci-lint \
+for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node go golangci-lint \
             goimports staticcheck gopls cargo-binstall fly hadolint dive \
             trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do

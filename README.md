@@ -41,7 +41,8 @@ The cloud image already ships common runtimes and tools — Python 3 (with `pip`
 `cargo` via `rustup`), Java, PHP, C/C++, Docker, Postgres 16, Redis 7, and
 `git`, `gh`, `jq`, `yq`, `ripgrep`, `tmux`. **Defer to the image** for all of
 it, except that this script upgrades the Go, Rust, Python and Node toolchains
-and `uv` / `bun` to their latest releases, because the image's copies lag.
+and `uv` / `bun` to their latest releases, and replaces `ripgrep` and
+`shellcheck` with their latest releases, because the image's copies lag.
 Beyond that, only install what the image lacks. Run `check-tools` in a cloud session for the exact list, and see
 [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)
 for the current inventory.
@@ -95,7 +96,8 @@ On top of the pre-installed image, in parallel:
 | Tool             | Source                                   | Notes                                                |
 | ---------------- | ---------------------------------------- | ---------------------------------------------------- |
 | `gh`             | apt                                      | GitHub CLI; pre-installed, so only fetched if the image drops it |
-| `shellcheck`     | apt                                      | Shell linting; only fetched if missing               |
+| `shellcheck`     | GitHub releases (`stable` tag)           | Latest ShellCheck in `/usr/local/bin`, ahead of the image's older apt copy |
+| `rg` (ripgrep)   | GitHub releases (version from crates.io) | Latest ripgrep in `/usr/local/bin`, ahead of the image's older apt copy; Claude Code searches with it |
 | `unzip`          | apt                                      | Required by the `bun` installer                      |
 | `skopeo`         | apt                                      | Inspect/copy container images between registries     |
 | `semgrep`        | PyPI (`uv tool install`)                 | Static analysis, in its own virtualenv               |
@@ -202,7 +204,8 @@ environment back to **Trusted** or **Custom**.
 The environment's **Network access** level governs which hosts the script can
 reach. The default **Trusted** level allows the bundled package registries
 (apt, PyPI, GitHub, crates.io, the Go module proxy, …). Under Trusted, these
-steps work out of the box: `gh`, `shellcheck`, `unzip`, `skopeo` (all apt),
+steps work out of the box: `gh`, `unzip`, `skopeo` (all apt), `shellcheck` and
+`ripgrep` (GitHub release assets),
 `semgrep` and `pre-commit` (PyPI), `zizmor` and `cargo-binstall` (GitHub
 release assets), `golangci-lint` (`golangci-lint.run`
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
@@ -221,7 +224,11 @@ assets via `uv`) and Node (`nodejs.org`).
 > that `github.com/<owner>/<repo>/releases/latest` issues, or, for Go projects,
 > from the Go module proxy (`proxy.golang.org/<module>/@latest`), which isn't
 > rate-limited. `dive` tries the redirect and falls back to the proxy;
-> `golangci-lint` goes straight to the proxy.
+> `golangci-lint` goes straight to the proxy. From inside a session the
+> `/releases/latest` page returns 403 for repos not attached to the session
+> (release asset downloads still work), so prefer a registry that knows the
+> version (`ripgrep` reads it from the crates.io index) or a fixed tag
+> (`shellcheck` downloads its `stable` release).
 
 > **Container registries (`cgr.dev` and friends).** The tools above can pull,
 > inspect and pin images at session time, but the Chainguard registry `cgr.dev`
