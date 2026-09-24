@@ -152,12 +152,21 @@ install_python() {
     || warn "Python ${ver} install failed"
 }
 
-# The image's stable Rust lags upstream by a few releases. `rustup update`
-# reads the channel manifest from static.rust-lang.org (Trusted), not GitHub.
+# Rust: nightly is the default toolchain. The image ships only stable, so
+# install the latest nightly with rustfmt/clippy/rust-analyzer/rust-src and make
+# it rustup's default; a repo's rust-toolchain.toml still overrides it. When a
+# component is missing from today's nightly, rustup falls back to the newest
+# nightly that has them all. Nightly moves daily and the snapshot is rebuilt
+# roughly weekly, so it can be a few days old in a session; `rustup update
+# nightly` refreshes it. The image's stable stays installed but isn't updated.
+# rustup reads static.rust-lang.org (Trusted), not GitHub.
 install_rust() {
-  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust update"; return; }
-  log "Rust stable -> latest"
-  rustup update stable || warn "Rust stable update failed"
+  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust nightly"; return; }
+  log "Rust nightly (latest, set as default)"
+  rustup toolchain install nightly --profile minimal \
+    -c rustfmt -c clippy -c rust-analyzer -c rust-src \
+    || { warn "Rust nightly install failed"; return; }
+  rustup default nightly || warn "could not make Rust nightly the default"
 }
 
 # Node.js. The image ships Node 20/21/22 under /opt/nodeNN with 22 on PATH.
@@ -620,6 +629,7 @@ for tool in gh shellcheck skopeo semgrep pre-commit uv bun node go golangci-lint
             goreleaser trufflehog actionlint zizmor; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
 done
+rustup default 2>/dev/null | grep -q '^nightly-' || missing+=("rust-nightly")
 if [ "${#missing[@]}" -gt 0 ]; then
   warn "missing after setup: ${missing[*]}"
 fi

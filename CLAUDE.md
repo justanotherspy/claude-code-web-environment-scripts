@@ -43,7 +43,7 @@ shape every edit — they are easy to violate and break session startup:
   Redis, git, gh, jq, ripgrep, `uv`, `bun`, and the common test runners (see
   [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)).
   Don't reinstall those. The deliberate exceptions: the script **upgrades** the
-  Go (to `GO_VERSION`), Rust (`rustup update stable`), Python (latest stable via
+  Go (to `GO_VERSION`), Rust (latest **nightly**, set as rustup's default), Python (latest stable via
   `uv python install --default`) and Node (latest LTS from nodejs.org)
   toolchains, and `uv` and `bun`, because the image's copies lag. The `gh` step
   stays a guarded no-op. Beyond that, add only tools the image lacks, such as
@@ -112,7 +112,8 @@ add it to the matching example file.
 
 The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
 (default `1.27.1`, overridable from the environment). `uv`, `bun`, Rust
-stable, Python (latest stable CPython; `PYTHON_VERSION` pins a minor such as
+nightly (the default toolchain; a snapshot's nightly can be a few days old,
+`rustup update nightly` refreshes it), Python (latest stable CPython; `PYTHON_VERSION` pins a minor such as
 `3.13`), Node (latest LTS; `NODE_VERSION` takes `current` or a major such as
 `26`), `golangci-lint` and the `go install` tools all track latest.
 

@@ -103,7 +103,7 @@ On top of the pre-installed image, in parallel:
 | `bun`            | `bun.sh/install`                         | Upgraded in place to the latest release; use `bun add -g` for global JS CLIs — **needs non-default domains** |
 | Python           | `uv python install` (GitHub release assets) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
 | Node.js          | `nodejs.org/dist`                        | Latest LTS (or `NODE_VERSION`) in `/opt/node<major>`, made the default `node`/`npm` |
-| Rust             | `rustup update stable` (`static.rust-lang.org`) | Upgrades the image's stable toolchain to the latest release |
+| Rust `nightly`   | `rustup` (`static.rust-lang.org`)        | Latest nightly with rustfmt/clippy/rust-analyzer/rust-src, set as rustup's **default** toolchain |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
 | `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
@@ -142,8 +142,14 @@ shell. The script also writes `/etc/profile.d/go-path.sh` (and hooks it into
 `/etc/bash.bashrc`) so that anything `go install`ed *during* a session — which
 lands in `$GOBIN`, or `$GOPATH/bin` when unset — is on PATH too.
 
-The base image already ships a **stable** `cargo`/`rustc` through `rustup`. The
-script adds `cargo-binstall`, which installs further cargo tools as prebuilt
+The base image ships only a **stable** `cargo`/`rustc` through `rustup`. The
+script installs the latest **nightly** (with `rustfmt`, `clippy`,
+`rust-analyzer` and `rust-src`) and makes it rustup's default, so `cargo` and
+`rustc` are nightly everywhere; a repo's `rust-toolchain.toml` still overrides
+it. The image's stable stays installed (`cargo +stable ...`) but isn't updated.
+Nightly moves daily and the snapshot is rebuilt roughly weekly, so the baked
+nightly can be a few days old; run `rustup update nightly` in-session for the
+newest. The script also adds `cargo-binstall`, which installs further cargo tools as prebuilt
 binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
 compiling them.
 
@@ -203,7 +209,7 @@ is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopl
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
 `trufflehog` and `actionlint` (all from GitHub release assets), and the
-toolchain upgrades for Rust (`static.rust-lang.org`), Python (GitHub release
+toolchain upgrades for Rust nightly (`static.rust-lang.org`), Python (GitHub release
 assets via `uv`) and Node (`nodejs.org`).
 
 > **Avoid `api.github.com` in the script, even under Full access.** It *is* on
