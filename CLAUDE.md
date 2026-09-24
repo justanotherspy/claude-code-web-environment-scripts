@@ -45,8 +45,9 @@ shape every edit — they are easy to violate and break session startup:
   Don't reinstall those. The deliberate exceptions: the script **upgrades** the
   Go (to `GO_VERSION`), Rust (latest **nightly**, set as rustup's default), Python (latest stable via
   `uv python install --default`) and Node (latest Current release from nodejs.org)
-  toolchains, `uv` and `bun`, and `ripgrep` and `shellcheck` (latest releases
-  into `/usr/local/bin`, ahead of the image's apt copies), because the image's
+  toolchains, `uv` and `bun`, `ripgrep` and `shellcheck` (latest releases
+  into `/usr/local/bin`, ahead of the image's apt copies), and `golangci-lint`
+  (version-compared against the image's copy), because the image's
   copies lag. The `gh` step
   stays a guarded no-op. Beyond that, add only tools the image lacks, such as
   `cargo-binstall`.
@@ -57,7 +58,9 @@ shape every edit — they are easy to violate and break session startup:
   CLI into `~/.local/bin` when the image's Node ships an older copy of it. Upgrade uv and bun by re-running their installers:
   `uv self update` and `bun upgrade` resolve versions through `api.github.com`.
 - **Don't repoint the image's interpreters.** The new Python and Node become
-  defaults via links in `~/.local/bin` (first on the session PATH).
+  defaults via links in `~/.local/bin`, which `configure_local_bin_path` puts
+  first on the session PATH (`/etc/profile.d/zz-local-bin.sh`); the image's
+  `nodejs.sh` would otherwise put `/opt/node22/bin` ahead of it.
   `/usr/bin/python3` and `/usr/local/bin/python3` stay on the image's Python so
   apt keeps working. Node installs into its own `/opt/node-v<version>`: never
   delete or overwrite the image's `/opt/node20-22`, which hold its global CLIs
