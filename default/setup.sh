@@ -13,8 +13,10 @@
 #     installs are fanned out with `&` / `wait`.
 #   - Never block session start on a flaky download: each step logs a warning
 #     and continues instead of aborting (that's why `set -e` is NOT used).
-#   - Only install things the cloud image lacks. Language runtimes, build tools,
-#     pytest/jest/cargo, postgres, redis and docker are already present.
+#   - Defer to the cloud image for everything it ships, with one exception:
+#     the Go, Rust, Python and Node toolchains and uv / bun are upgraded to
+#     their latest releases, because the image's copies lag. Otherwise only
+#     install things the image lacks.
 #
 # Docs: https://code.claude.com/docs/en/claude-code-on-the-web#setup-scripts
 #
@@ -96,20 +98,118 @@ install_apt() {
     || warn "apt install failed (${pkgs[*]})"
 }
 
+# uv and bun ship in the base image but lag their releases, so both are
+# upgraded in place rather than skipped. Neither uses its self-update command:
+# `uv self update` and `bun upgrade` resolve the latest version through
+# api.github.com, which rate-limits shared build IPs. The upstream installers
+# always serve the latest release without the API, so re-run them into the
+# directory the existing binary already lives in.
 install_uv() {
-  command -v uv >/dev/null 2>&1 && { log "uv already present"; return; }
-  log "uv (Astral Python package/project manager)"
+  local dir=/usr/local/bin
+  command -v uv >/dev/null 2>&1 && dir="$(dirname "$(command -v uv)")"
+  log "uv (Astral Python package/project manager) -> latest in ${dir}"
   curl -LsSf https://astral.sh/uv/install.sh \
-    | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
-    || warn "uv install failed (is astral.sh on the allowlist?)"
+    | env UV_INSTALL_DIR="${dir}" INSTALLER_NO_MODIFY_PATH=1 sh \
+    || warn "uv install/upgrade failed (is astral.sh on the allowlist?)"
 }
 
 install_bun() {
-  command -v bun >/dev/null 2>&1 && { log "bun already present"; return; }
-  log "bun (JS runtime / package manager)"
+  # The image keeps bun in ~/.bun/bin (linked from /usr/local/bin); upgrade
+  # that copy so the one first on PATH is the new one.
+  local root=/usr/local
+  if command -v bun >/dev/null 2>&1; then
+    root="$(dirname "$(dirname "$(readlink -f "$(command -v bun)")")")"
+  fi
+  log "bun (JS runtime / package manager) -> latest in ${root}"
   curl -fsSL https://bun.sh/install \
-    | env BUN_INSTALL=/usr/local bash \
-    || warn "bun install failed (is bun.sh on the allowlist, and is unzip present?)"
+    | env BUN_INSTALL="${root}" bash \
+    || { warn "bun install/upgrade failed (is bun.sh on the allowlist, and is unzip present?)"; return; }
+  [ -e /usr/local/bin/bun ] || ln -s "${root}/bin/bun" /usr/local/bin/bun
+}
+
+# Latest stable CPython (or PYTHON_VERSION, e.g. 3.13), installed by uv and
+# made the default `python` / `python3` via links in ~/.local/bin, which is
+# first on the session PATH. /usr/bin/python3 and /usr/local/bin/python3 (the
+# image's 3.11) stay put, so apt and the image's pip-installed CLIs keep their
+# interpreter. Needs the freshly upgraded uv: each uv release only knows the
+# Pythons out at the time. The version is named explicitly because a bare
+# `uv python install` is satisfied by any Python already installed.
+install_python() {
+  command -v uv >/dev/null 2>&1 || { warn "uv not found; skipping latest Python"; return; }
+  local ver="${PYTHON_VERSION:-}"
+  if [ -z "${ver}" ]; then
+    ver="$(uv python list --only-downloads --output-format json 2>/dev/null \
+      | jq -r '[.[] | select(.implementation == "cpython" and .variant == "default"
+                             and (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))][0].version')"
+  fi
+  case "${ver}" in
+    3.*) ;;
+    *) warn "latest Python install failed (could not resolve a version)"; return ;;
+  esac
+  log "Python ${ver} (via uv, set as default python3)"
+  uv python install --default --preview-features python-install-default "${ver}" \
+    || uv python install --default "${ver}" \
+    || warn "Python ${ver} install failed"
+}
+
+# The image's stable Rust lags upstream by a few releases. `rustup update`
+# reads the channel manifest from static.rust-lang.org (Trusted), not GitHub.
+install_rust() {
+  command -v rustup >/dev/null 2>&1 || { warn "rustup not found; skipping Rust update"; return; }
+  log "Rust stable -> latest"
+  rustup update stable || warn "Rust stable update failed"
+}
+
+# Node.js. The image ships Node 20/21/22 under /opt/nodeNN with 22 on PATH.
+# Install the latest LTS (or NODE_VERSION: `current`, or a major such as 26)
+# from nodejs.org, which is on the Trusted list, as /opt/node<major>, and link
+# node/npm/npx/corepack into ~/.local/bin (ahead of /opt/node22/bin on the
+# session PATH) and /usr/local/bin. The version comes from nodejs.org's static
+# release index, not a rate-limited API. Global CLIs belong in `bun add -g`
+# (~/.bun/bin is on PATH); `npm i -g` would land in /opt/node<major>/bin.
+install_node() {
+  command -v jq >/dev/null 2>&1 || { warn "jq not found; skipping Node.js"; return; }
+  local sel="${NODE_VERSION:-lts}" filter
+  case "${sel}" in
+    lts)            filter='[.[] | select(.lts != false)][0].version' ;;
+    current|latest) filter='.[0].version' ;;
+    *)              filter="[.[] | select(.version | startswith(\"v${sel#v}.\"))][0].version" ;;
+  esac
+  local ver
+  ver="$(curl -fsSL https://nodejs.org/dist/index.json | jq -r "${filter}")"
+  case "${ver}" in
+    v[0-9]*) ;;
+    *) warn "Node.js install failed (could not resolve NODE_VERSION=${sel})"; return ;;
+  esac
+  local major="${ver#v}"
+  major="${major%%.*}"
+  local dest="/opt/node${major}"
+  if [ "$("${dest}/bin/node" --version 2>/dev/null)" = "${ver}" ]; then
+    log "Node.js ${ver} already present"
+  else
+    log "Node.js ${ver} -> ${dest}"
+    local base="https://nodejs.org/dist/${ver}" tarball="node-${ver}-linux-x64.tar.xz"
+    local tmp
+    tmp="$(mktemp -d)"
+    if curl -fsSL -o "${tmp}/${tarball}" "${base}/${tarball}" \
+       && curl -fsSL -o "${tmp}/SHASUMS256.txt" "${base}/SHASUMS256.txt" \
+       && (cd "${tmp}" && grep " ${tarball}\$" SHASUMS256.txt | sha256sum -c --status) \
+       && tar -C "${tmp}" -xJf "${tmp}/${tarball}"; then
+      rm -rf "${dest}" && mv "${tmp}/node-${ver}-linux-x64" "${dest}"
+    else
+      warn "Node.js ${ver} download failed"
+    fi
+    rm -rf "${tmp}"
+  fi
+  [ -x "${dest}/bin/node" ] || return 0
+  local bin dir
+  for dir in "${HOME}/.local/bin" /usr/local/bin; do
+    mkdir -p "${dir}"
+    for bin in node npm npx corepack; do
+      [ -e "${dest}/bin/${bin}" ] && ln -sfn "${dest}/bin/${bin}" "${dir}/${bin}"
+    done
+  done
+  return 0
 }
 
 install_cargo_binstall() {
@@ -477,10 +577,17 @@ install_precommit() {
 # independent downloads in parallel and wait for all of them.
 install_apt
 
-install_semgrep &
-install_fly &
-install_uv &
+# Upgrade uv before anything uses it, so the Python it installs and the tools
+# below all come from the latest uv.
+install_uv
+
+# Latest Python first, then the uv-installed tools, in sequence so the tools
+# don't race the new default interpreter.
+( install_python; install_semgrep; install_precommit ) &
 install_bun &
+install_node &
+install_rust &
+install_fly &
 # Docker image development tools (all from GitHub, independent downloads).
 install_hadolint &
 install_dive &
@@ -494,7 +601,6 @@ install_trufflehog &
 install_actionlint &
 install_golangci_lint &
 install_zizmor &
-install_precommit &
 # cargo-binstall has no in-script consumers; it is installed so sessions can
 # `cargo binstall` further cargo tools as prebuilt binaries.
 install_cargo_binstall &
@@ -508,7 +614,7 @@ wait
 # failed step is easy to spot in the setup logs without scrolling for its
 # warning. Informational only: it never fails the script.
 missing=()
-for tool in gh shellcheck skopeo semgrep pre-commit uv bun go golangci-lint \
+for tool in gh shellcheck skopeo semgrep pre-commit uv bun node go golangci-lint \
             goimports staticcheck gopls cargo-binstall fly hadolint dive \
             trivy crane cosign syft \
             goreleaser trufflehog actionlint zizmor; do

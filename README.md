@@ -39,8 +39,10 @@ The cloud image already ships common runtimes and tools — Python 3 (with `pip`
 `poetry`, `uv`, `black`, `mypy`, `pytest`, `ruff`), Node 20/21/22 (with `npm`,
 `yarn`, `pnpm`, `bun`, `eslint`, `prettier`), Ruby, Go, Rust (stable `rustc` and
 `cargo` via `rustup`), Java, PHP, C/C++, Docker, Postgres 16, Redis 7, and
-`git`, `gh`, `jq`, `yq`, `ripgrep`, `tmux`. **Only install what the image
-lacks.** Run `check-tools` in a cloud session for the exact list, and see
+`git`, `gh`, `jq`, `yq`, `ripgrep`, `tmux`. **Defer to the image** for all of
+it, except that this script upgrades the Go, Rust, Python and Node toolchains
+and `uv` / `bun` to their latest releases, because the image's copies lag.
+Beyond that, only install what the image lacks. Run `check-tools` in a cloud session for the exact list, and see
 [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)
 for the current inventory.
 
@@ -68,19 +70,20 @@ that should run everywhere, like `npm install` — and gate it on
 2. **Stay under ~5 minutes** so the cache can build. Run independent installs in
    parallel with `&` and `wait`.
 3. **Only install what's missing.** The base image is rich; check before adding.
+   Upgrade a pre-installed toolchain only when you need a newer version.
 4. **Make steps idempotent** — guard with `command -v <tool>` so re-runs and
    SessionStart parity are cheap.
 5. **Match installs to your network level.** Installs fetch over the wire; a host
    that isn't allowlisted will fail (see [Network access](#network-access)).
 6. **Non-interactive apt:** `export DEBIAN_FRONTEND=noninteractive` and pass
    `-y`.
-7. **Secrets:** never hardcode credentials in the script. Put tokens in the
-   environment's **API credentials** section where it's offered; plain env vars
-   and the script are visible to anyone who can edit the environment. See
-   [`default/credentials.example`](default/credentials.example) for the tokens
-   the installed CLIs read. `gh` already authenticates through the Claude GitHub
-   App, and Sprites is used through its claude.ai connector, so neither needs a
-   token.
+7. **Secrets:** never hardcode credentials in the script. Env vars and the
+   script are visible to anyone who uses the environment. On Pro/Max plans, add
+   API keys as **API credentials**: the agent proxy attaches them as headers to
+   requests for the hosts you list, so the key never enters the VM, but they
+   aren't available to the setup script. See
+   [`default/credentials.example`](default/credentials.example). GitHub needs
+   nothing: the GitHub proxy authenticates `git` and `gh` itself.
 8. **Big/slow downloads:** if a single download won't fit in ~5 minutes, move it
    to a SessionStart hook that backgrounds it, or pre-pull Docker images in the
    script so the layers land in the cache.
@@ -96,8 +99,11 @@ On top of the pre-installed image, in parallel:
 | `unzip`          | apt                                      | Required by the `bun` installer                      |
 | `skopeo`         | apt                                      | Inspect/copy container images between registries     |
 | `semgrep`        | PyPI (`uv tool install`)                 | Static analysis, in its own virtualenv               |
-| `uv`             | `astral.sh/uv/install.sh`                | Python package/project manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
-| `bun`            | `bun.sh/install`                         | JS runtime / package manager; pre-installed on current images, so the step is a guarded no-op — **needs non-default domains** when it does run |
+| `uv`             | `astral.sh/uv/install.sh`                | Upgraded in place to the latest release — **needs non-default domains** |
+| `bun`            | `bun.sh/install`                         | Upgraded in place to the latest release; use `bun add -g` for global JS CLIs — **needs non-default domains** |
+| Python           | `uv python install` (GitHub release assets) | Latest stable CPython (or `PYTHON_VERSION`), made the default `python`/`python3` |
+| Node.js          | `nodejs.org/dist`                        | Latest LTS (or `NODE_VERSION`) in `/opt/node<major>`, made the default `node`/`npm` |
+| Rust             | `rustup update stable` (`static.rust-lang.org`) | Upgrades the image's stable toolchain to the latest release |
 | `go`             | `go.dev/dl` (→ `dl.google.com`)          | Upgrades the base Go to `GO_VERSION` — **needs non-default domains** |
 | `golangci-lint`  | GitHub releases (tag via `proxy.golang.org`) | Go linter (prebuilt binary); falls back to `golangci-lint.run/install.sh` |
 | `goimports`      | `go install` (proxy.golang.org)          | Go import formatter                                  |
@@ -117,6 +123,19 @@ On top of the pre-installed image, in parallel:
 | `zizmor`         | GitHub releases (`zizmorcore/zizmor`)    | Static security analysis of GitHub Actions (prebuilt binary) |
 | `pre-commit`     | PyPI (`uv tool install`)                 | Git hook framework (drives `make hooks`), in its own virtualenv |
 
+The upgraded Python and Node become the defaults through links in `~/.local/bin`,
+which is first on the session PATH. The image's own interpreters stay in place:
+`/usr/bin/python3` and `/usr/local/bin/python3` are still 3.11, so `apt` and the
+image's pip-installed CLIs (`pytest`, `black`, `mypy`, `ruff`) keep working. Those
+CLIs aren't installed for the new Python, so `python3 -m pytest` fails where
+`pytest` works; prefer `uv run` / `uvx` in projects. Likewise `npm i -g` lands
+in `/opt/node<major>/bin`, which isn't on PATH, so install global JS CLIs with
+`bun add -g` (`~/.bun/bin` is on PATH).
+
+`uv` and `bun` are upgraded by re-running their installers rather than
+`uv self update` / `bun upgrade`, which both ask `api.github.com` for the latest
+version (see below).
+
 All Go tools the script installs (`golangci-lint`, `goimports`, `staticcheck`,
 `gopls`) land in `/usr/local/bin`, which is on PATH for every kind of session
 shell. The script also writes `/etc/profile.d/go-path.sh` (and hooks it into
@@ -128,10 +147,12 @@ script adds `cargo-binstall`, which installs further cargo tools as prebuilt
 binaries in seconds (e.g. `cargo binstall cargo-edit cargo-watch`) instead of
 compiling them.
 
-Versions track **latest** by default. To pin `zizmor` for a reproducible cache,
-set `ZIZMOR_VERSION` (e.g. `v1.25.2`) as an environment variable. The Go
+Versions track **latest** by default. To hold one back, set an environment
+variable: `ZIZMOR_VERSION` (e.g. `v1.25.2`), `PYTHON_VERSION` (e.g. `3.13`) or
+`NODE_VERSION` (`lts`, the default; `current`; or a major such as `26`). The Go
 toolchain is pinned via `GO_VERSION` (default `1.27.1`, the current release);
-set it to upgrade or roll back the installed Go.
+set it to upgrade or roll back the installed Go. See
+[`default/.env.example`](default/.env.example).
 
 ### Keeping pinned versions current
 
@@ -181,7 +202,9 @@ release assets), `golangci-lint` (`golangci-lint.run`
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
-`trufflehog` and `actionlint` (all from GitHub release assets).
+`trufflehog` and `actionlint` (all from GitHub release assets), and the
+toolchain upgrades for Rust (`static.rust-lang.org`), Python (GitHub release
+assets via `uv`) and Node (`nodejs.org`).
 
 > **Avoid `api.github.com` in the script, even under Full access.** It *is* on
 > the Trusted list, but unauthenticated calls are rate-limited per IP and shared
@@ -269,9 +292,9 @@ this repo is the source of truth for the script's contents. To apply it:
    line, no quotes). [`default/.env.example`](default/.env.example) lists every
    variable the script reads (`SETUP_DEBUG` and the version pins), recommended
    settings for the installed CLIs, and the variables to leave alone.
-5. Optionally add tokens under **API credentials** (or as env vars if that
-   section isn't offered), using
-   [`default/credentials.example`](default/credentials.example) as the template.
+5. Optionally add API keys under **API credentials** (Pro/Max, existing
+   environments only), one form per block in
+   [`default/credentials.example`](default/credentials.example).
 
 ## Debugging
 

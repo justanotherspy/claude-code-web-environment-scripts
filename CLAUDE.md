@@ -38,15 +38,24 @@ shape every edit — they are easy to violate and break session startup:
   must be non-fatal: wrap it so failure logs a `warn` and continues (see the
   `install_*` functions and the `|| warn ...` pattern). Do not add a top-level
   `set -e`.
-- **Only install what the base image lacks.** The cloud image already ships
-  Python, Node, Ruby, Go, Rust, Java, PHP, Docker, Postgres, Redis, git, gh, jq,
-  ripgrep, `uv`, `bun`, and the common test runners (see
+- **Defer to the base image; upgrade only the toolchains.** The cloud image
+  already ships Python, Node, Ruby, Go, Rust, Java, PHP, Docker, Postgres,
+  Redis, git, gh, jq, ripgrep, `uv`, `bun`, and the common test runners (see
   [Installed tools](https://code.claude.com/docs/en/cloud-environments#installed-tools)).
-  Don't reinstall those — the `uv`, `bun` and `gh` steps are kept only as
-  guarded no-ops in case the image drops them. Exceptions the script makes on
-  purpose: it **upgrades** Go to the pinned `GO_VERSION` because the base Go
-  lags the latest release, and it adds `cargo-binstall`, which the base image
-  doesn't have.
+  Don't reinstall those. The deliberate exceptions: the script **upgrades** the
+  Go (to `GO_VERSION`), Rust (`rustup update stable`), Python (latest stable via
+  `uv python install --default`) and Node (latest LTS from nodejs.org)
+  toolchains, and `uv` and `bun`, because the image's copies lag. The `gh` step
+  stays a guarded no-op. Beyond that, add only tools the image lacks, such as
+  `cargo-binstall`.
+- **Prefer uv and bun.** Python CLIs go through `install_python_tool` (uv);
+  global JS CLIs go through `bun add -g` rather than `npm i -g`, whose global bin
+  dir isn't on PATH. Upgrade uv and bun by re-running their installers:
+  `uv self update` and `bun upgrade` resolve versions through `api.github.com`.
+- **Don't repoint the image's interpreters.** The new Python and Node become
+  defaults via links in `~/.local/bin` (first on the session PATH).
+  `/usr/bin/python3` and `/usr/local/bin/python3` stay on the image's Python so
+  apt and its pip-installed CLIs keep working.
 - **Toolchains, not just CLIs.** The Go repos' `go.mod` sits on the current
   release, which the base image's Go lags, so the upgraded toolchain belongs in
   the snapshot, not in a per-session download.
@@ -102,8 +111,10 @@ a variable the script reads, or install a CLI that authenticates with a token,
 add it to the matching example file.
 
 The Go toolchain is pinned by the `GO_VERSION` variable at the top of the script
-(default `1.27.1`, overridable from the environment). `uv`, `bun`,
-`golangci-lint` and the `go install` tools all track latest.
+(default `1.27.1`, overridable from the environment). `uv`, `bun`, Rust
+stable, Python (latest stable CPython; `PYTHON_VERSION` pins a minor such as
+`3.13`), Node (latest LTS; `NODE_VERSION` takes `current` or a major such as
+`26`), `golangci-lint` and the `go install` tools all track latest.
 
 `GO_VERSION` is the only hardcoded tool version in the repo. `renovate.json`
 (Renovate App) keeps it current via a regex custom manager on `default/setup.sh`
