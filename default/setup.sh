@@ -65,7 +65,7 @@ export PATH
 # ZIZMOR_VERSION (e.g. v1.25.2) in the environment variables. The Go toolchain
 # is pinned here and overridable with GO_VERSION (the base image ships an older
 # Go).
-GO_VERSION="${GO_VERSION:-1.27.1}"
+GO_VERSION="${GO_VERSION:-1.27.2}"
 
 log()  { printf '\n=== setup: %s ===\n' "$*"; }
 warn() { printf 'setup: WARNING: %s\n' "$*" >&2; }
