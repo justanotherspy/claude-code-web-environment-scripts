@@ -39,6 +39,7 @@
 #     bun         -> bun.sh / *.bun.sh
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
+#     hey         -> hey.com / *.hey.com (installer; release from GitHub)
 # Without them, the matching step logs a warning and is skipped.
 # ---------------------------------------------------------------------------
 
@@ -532,6 +533,24 @@ install_fly() {
     || warn "flyctl install failed (is fly.io on the allowlist?)"
 }
 
+# hey: the HEY email/calendar CLI (basecamp/hey-cli). Its installer resolves
+# "latest" through the releases/latest redirect, which 403s on shared IPs, so
+# the tag comes from the Go module proxy and is passed in as HEY_VERSION.
+# Installing into /usr/local/bin (already on PATH) keeps the installer from
+# appending a PATH line to ~/.bashrc. With no terminal it skips the sign-in
+# wizard and runs `hey setup agents`, which installs the agent skill. It runs
+# after install_cosign so the release's Sigstore signature is always checked.
+install_hey() {
+  command -v hey >/dev/null 2>&1 && { log "hey already present"; return; }
+  log "hey (HEY CLI)"
+  local ver
+  ver="$(curl -fsSL https://proxy.golang.org/github.com/basecamp/hey-cli/@latest \
+    | sed -nE 's#.*"Version":"v([^"]+)".*#\1#p')"
+  curl -fsSL https://hey.com/install-cli \
+    | HEY_VERSION="${ver}" HEY_BIN_DIR=/usr/local/bin bash \
+    || warn "hey install failed (is hey.com on the allowlist?)"
+}
+
 # --- Docker image development tooling -------------------------------------
 # Docker itself ships in the base image; these add the tools for *authoring*
 # and inspecting images. All three pull prebuilt binaries from GitHub release
@@ -727,7 +746,8 @@ install_dive &
 install_trivy &
 # Registry / supply-chain / CI tooling (all from GitHub, PyPI, independent).
 install_crane &
-install_cosign &
+# hey's installer verifies its release signature only when cosign is present.
+( install_cosign; install_hey ) &
 install_syft &
 install_goreleaser &
 install_trufflehog &
@@ -750,7 +770,7 @@ missing=()
 for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node corepack go golangci-lint \
             goimports staticcheck gopls cargo-binstall fly hadolint dive \
             trivy crane cosign syft \
-            goreleaser trufflehog actionlint zizmor; do
+            goreleaser trufflehog actionlint zizmor hey; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
 done
 # The upgraded tools shadow image copies that always pass the check above, so

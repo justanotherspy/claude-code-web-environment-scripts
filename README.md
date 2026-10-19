@@ -115,6 +115,7 @@ On top of the pre-installed image, in parallel:
 | `gopls`          | `go install` (proxy.golang.org)          | Go language server                                   |
 | `cargo-binstall` | `raw.githubusercontent.com/.../cargo-binstall` | Installs cargo tools as prebuilt binaries      |
 | `flyctl`         | `fly.io/install.sh`                      | Fly.io CLI — **needs non-default domains**           |
+| `hey`            | `hey.com/install-cli` (tag via `proxy.golang.org`) | HEY email/calendar CLI; release from GitHub, signature checked with `cosign`, agent skill installed — **needs non-default domains** |
 | `hadolint`       | GitHub releases (`hadolint/hadolint`)    | Dockerfile linter (static binary)                    |
 | `dive`           | GitHub releases (`wagoodman/dive`)       | Inspect image layers / find wasted space             |
 | `trivy`          | GitHub (`aquasecurity/trivy` install.sh) | Scan images, filesystems & Dockerfiles for vulns/misconfigs |
@@ -199,7 +200,7 @@ in the snapshot, then how long the run took. It always exits 0.
 Every download in the script goes through a `curl` wrapper with a connect
 timeout, a 180-second transfer cap and two retries, so one stalled host can't
 push the run past the ~5-minute cache budget. Third-party installers piped to
-`sh` (trivy, syft, trufflehog, actionlint, bun, uv, flyctl) make their own
+`sh` (trivy, syft, trufflehog, actionlint, bun, uv, flyctl, hey) make their own
 curl calls and aren't covered.
 
 `semgrep` and `pre-commit` install with `uv tool install`, which gives each one
@@ -262,6 +263,8 @@ logs a warning and is skipped:
 - `bun` → `bun.sh` / `*.bun.sh`
 - `go` toolchain → `dl.google.com` (the `go.dev/dl` tarball redirects there)
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
+- `hey` → `hey.com` / `*.hey.com` (the installer redirects from `hey.com` to
+  `www.hey.com`, then to GitHub; the CLI itself talks to HEY)
 - `zizmor` docs → `zizmor.sh` / `*.zizmor.sh` (the `docs.zizmor.sh` audit
   reference pages linked from each finding; the tool itself installs under
   Trusted via crates.io + GitHub)
@@ -283,6 +286,8 @@ justanotherspy.com
 fly.io
 *.fly.dev
 api.machines.dev
+hey.com
+*.hey.com
 astral.sh
 *.astral.sh
 bun.sh

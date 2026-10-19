@@ -107,7 +107,7 @@ to Trusted or Custom, so keep the README allowlist accurate anyway:
   `corepack` (npm registry).
 - `uv` and the Python upgrade (`astral.sh`; uv downloads Python from
   `releases.astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
-  (`go.dev/dl` redirects to `dl.google.com`), and `flyctl` download
+  (`go.dev/dl` redirects to `dl.google.com`), `flyctl` and `hey` (`hey.com`) download
   from hosts **not** on the Trusted list, so the environment must use **Custom**
   access (with default package managers still enabled) plus the allowlist
   documented in the README's "Network access" section. Without those domains,
