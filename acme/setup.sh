@@ -6,10 +6,10 @@
 # (justanotherspy/acme-sim, acme-bot, oncall-kit). It keeps AWS access out of
 # the default environment. It is deliberately leaner than default/setup.sh:
 # the Go toolchain (the app is Go), shell/CI/container linters, and the
-# AWS / Kubernetes / Terraform / Argo CD CLIs. AWS credentials are never
-# handled here: the environment stores a read-only key as an "AWS SigV4"
-# network secret, and the session proxy re-signs AWS requests with it (see
-# acme/credentials.example).
+# AWS / Kubernetes / Terraform / Argo CD CLIs, for writing and checking IaC and
+# manifests offline. The environment holds no AWS or cluster credentials:
+# Claude reads AWS through the AWS MCP connector, and humans run Terraform and
+# kubectl against the account (see acme/credentials.example).
 #
 # Same rules as default/setup.sh (see README.md and CLAUDE.md): runs once as
 # root on Ubuntu 24.04 before Claude Code launches; every step is non-fatal

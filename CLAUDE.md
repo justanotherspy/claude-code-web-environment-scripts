@@ -13,8 +13,8 @@ suite here.
 
 A second, leaner script, `acme/setup.sh`, provisions a dedicated environment
 for the ACME simulation (Go, linters, AWS CLI, kubectl, helm, terraform,
-argocd). Its AWS key is an "AWS SigV4" network secret the proxy re-signs
-with, never an env var or file (see `acme/credentials.example`). It follows every rule below and copies its shared install
+argocd). It holds no AWS or cluster credentials: Claude reads AWS through
+the AWS MCP connector (see `acme/credentials.example`). It follows every rule below and copies its shared install
 functions from `default/setup.sh`: fix a bug in one, fix it in both. Its
 example env vars live in `acme/.env.example`. Keep AWS tooling and credentials
 out of `default/`, and never write AWS keys into a script, env var or file.
