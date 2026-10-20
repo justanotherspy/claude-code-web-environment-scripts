@@ -40,6 +40,10 @@
 #     Go tarball  -> dl.google.com   (go.dev/dl redirects here)
 #     flyctl      -> fly.io / *.fly.io / *.fly.dev / api.machines.dev
 #     hey         -> hey.com / *.hey.com (installer; release from GitHub)
+#     aws CLI     -> awscli.amazonaws.com
+#     kubectl     -> dl.k8s.io / cdn.dl.k8s.io
+#     helm        -> get.helm.sh
+#     terraform   -> checkpoint-api.hashicorp.com / releases.hashicorp.com
 # Without them, the matching step logs a warning and is skipped.
 # ---------------------------------------------------------------------------
 
@@ -551,6 +555,159 @@ install_hey() {
     || warn "hey install failed (is hey.com on the allowlist?)"
 }
 
+# --- Cloud / Kubernetes tooling ---------------------------------------------
+# For the ACME simulation: read-only AWS and kubectl access to its EKS cluster.
+# None of these ship in the image. Each version comes from the vendor's own
+# "latest" endpoint, never api.github.com.
+
+# AWS CLI v2: the official installer bundle (version-independent URL). Needs
+# unzip, which install_apt provides. --update makes a rebuild upgrade in place.
+install_awscli() {
+  log "aws (AWS CLI v2)"
+  local tmp
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/awscliv2.zip" https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip \
+     && unzip -q "${tmp}/awscliv2.zip" -d "${tmp}"; then
+    "${tmp}/aws/install" --update -i /usr/local/aws-cli -b /usr/local/bin >/dev/null \
+      || warn "aws CLI install failed"
+  else
+    warn "aws CLI download failed (is awscli.amazonaws.com on the allowlist?)"
+  fi
+  rm -rf "${tmp}"
+}
+
+# kubectl: latest stable from dl.k8s.io, checked against its published sha256.
+# kubectl has kustomize built in (`kubectl kustomize`, `kubectl apply -k`).
+install_kubectl() {
+  local ver tmp
+  ver="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+  case "${ver}" in
+    v1.*) ;;
+    *) warn "kubectl install failed (could not resolve stable version)"; return ;;
+  esac
+  if kubectl version --client 2>/dev/null | grep -q "Client Version: ${ver}$"; then
+    log "kubectl ${ver} already present"; return
+  fi
+  log "kubectl ${ver}"
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/kubectl" "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl" \
+     && curl -fsSL -o "${tmp}/kubectl.sha256" "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl.sha256" \
+     && echo "$(cat "${tmp}/kubectl.sha256")  ${tmp}/kubectl" | sha256sum -c --status; then
+    install -m 0755 "${tmp}/kubectl" /usr/local/bin/kubectl
+  else
+    warn "kubectl ${ver} install failed (is dl.k8s.io on the allowlist?)"
+  fi
+  rm -rf "${tmp}"
+}
+
+# helm: get.helm.sh publishes the latest tag at a fixed URL, so no GitHub
+# lookup is needed. Checked against the published sha256.
+install_helm() {
+  local ver tmp asset
+  ver="$(curl -fsSL https://get.helm.sh/helm-latest-version)"
+  case "${ver}" in
+    v[0-9]*) ;;
+    *) warn "helm install failed (could not resolve latest version)"; return ;;
+  esac
+  if helm version --short 2>/dev/null | grep -q "^${ver}+"; then
+    log "helm ${ver} already present"; return
+  fi
+  log "helm ${ver}"
+  asset="helm-${ver}-linux-amd64.tar.gz"
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/${asset}" "https://get.helm.sh/${asset}" \
+     && curl -fsSL -o "${tmp}/${asset}.sha256sum" "https://get.helm.sh/${asset}.sha256sum" \
+     && (cd "${tmp}" && sha256sum -c --status "${asset}.sha256sum") \
+     && tar -C "${tmp}" -xzf "${tmp}/${asset}" linux-amd64/helm; then
+    install -m 0755 "${tmp}/linux-amd64/helm" /usr/local/bin/helm
+  else
+    warn "helm ${ver} install failed (is get.helm.sh on the allowlist?)"
+  fi
+  rm -rf "${tmp}"
+}
+
+# terraform: the latest version comes from HashiCorp's checkpoint API, the zip
+# from releases.hashicorp.com, checked against the release's SHA256SUMS.
+install_terraform() {
+  local ver tmp zip
+  ver="$(curl -fsSL https://checkpoint-api.hashicorp.com/v1/check/terraform \
+    | jq -r '.current_version // empty' 2>/dev/null)"
+  case "${ver}" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) warn "terraform install failed (could not resolve latest version)"; return ;;
+  esac
+  if terraform version 2>/dev/null | head -n 1 | grep -q "^Terraform v${ver}$"; then
+    log "terraform ${ver} already present"; return
+  fi
+  log "terraform ${ver}"
+  zip="terraform_${ver}_linux_amd64.zip"
+  tmp="$(mktemp -d)"
+  if curl -fsSL -o "${tmp}/${zip}" "https://releases.hashicorp.com/terraform/${ver}/${zip}" \
+     && curl -fsSL -o "${tmp}/SHA256SUMS" "https://releases.hashicorp.com/terraform/${ver}/terraform_${ver}_SHA256SUMS" \
+     && (cd "${tmp}" && grep " ${zip}$" SHA256SUMS | sha256sum -c --status) \
+     && unzip -q -o "${tmp}/${zip}" terraform -d "${tmp}"; then
+    install -m 0755 "${tmp}/terraform" /usr/local/bin/terraform
+  else
+    warn "terraform ${ver} install failed (are releases.hashicorp.com and checkpoint-api.hashicorp.com on the allowlist?)"
+  fi
+  rm -rf "${tmp}"
+}
+
+# argocd CLI: version-independent release asset, so latest/download works.
+install_argocd() {
+  command -v argocd >/dev/null 2>&1 && { log "argocd already present"; return; }
+  log "argocd (Argo CD CLI)"
+  local tmp
+  tmp="$(mktemp)"
+  if curl -fsSL -o "${tmp}" \
+       https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 \
+     && [ -s "${tmp}" ]; then
+    install -m 0755 "${tmp}" /usr/local/bin/argocd
+  else
+    warn "argocd install failed"
+  fi
+  rm -f "${tmp}"
+}
+
+# AWS profile for the ACME simulation. The setup script never sees
+# credentials, so this writes a profile.d snippet that builds ~/.aws/config at
+# session start from environment variables (see default/.env.example):
+#   ACME_AWS_ACCESS_KEY_ID / ACME_AWS_SECRET_ACCESS_KEY: an IAM user that can
+#     only sts:AssumeRole into ACME_AWS_ROLE_ARN (a read-only role).
+#   ACME_AWS_ROLE_ARN, and optionally ACME_AWS_REGION (default eu-west-1).
+# The keys deliberately aren't named AWS_ACCESS_KEY_ID: env keys outrank
+# AWS_PROFILE, so every command would run as the bare user instead of the role.
+# For the same reason the snippet unsets the session's AWS_* key placeholders.
+# With the ACME_AWS_* variables unset, it does nothing.
+configure_aws_profile() {
+  log "AWS profile (acme, from ACME_AWS_* env vars at session start)"
+  cat > /etc/profile.d/zz-aws-acme.sh <<'PROFILE'
+# Build the `acme` AWS profile from ACME_AWS_* env vars and make it the
+# default. Managed by the Claude Code on the web setup script.
+if [ -n "${ACME_AWS_ACCESS_KEY_ID:-}" ] && [ -n "${ACME_AWS_SECRET_ACCESS_KEY:-}" ] \
+   && [ -n "${ACME_AWS_ROLE_ARN:-}" ]; then
+  _acme_region="${ACME_AWS_REGION:-eu-west-1}"
+  mkdir -p "${HOME}/.aws" && chmod 0700 "${HOME}/.aws"
+  ( umask 077
+    printf '[acme-base]\naws_access_key_id = %s\naws_secret_access_key = %s\n' \
+      "${ACME_AWS_ACCESS_KEY_ID}" "${ACME_AWS_SECRET_ACCESS_KEY}" > "${HOME}/.aws/credentials"
+    printf '[profile acme]\nrole_arn = %s\nsource_profile = acme-base\nrole_session_name = claude-code-web\nduration_seconds = 3600\nregion = %s\nsts_regional_endpoints = regional\n' \
+      "${ACME_AWS_ROLE_ARN}" "${_acme_region}" > "${HOME}/.aws/config" )
+  # The session sets AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY to `proxy-injected`
+  # placeholders, and env keys outrank AWS_PROFILE, so drop them here.
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+  export AWS_PROFILE=acme AWS_REGION="${_acme_region}"
+  unset _acme_region
+fi
+PROFILE
+  chmod 0644 /etc/profile.d/zz-aws-acme.sh \
+    || warn "could not write /etc/profile.d/zz-aws-acme.sh"
+  if ! grep -q 'profile\.d/zz-aws-acme\.sh' /etc/bash.bashrc 2>/dev/null; then
+    printf '%s\n' '[ -f /etc/profile.d/zz-aws-acme.sh ] && . /etc/profile.d/zz-aws-acme.sh' \
+      >> /etc/bash.bashrc || warn "could not hook zz-aws-acme.sh into /etc/bash.bashrc"
+  fi
+}
+
 # --- Docker image development tooling -------------------------------------
 # Docker itself ships in the base image; these add the tools for *authoring*
 # and inspecting images. All three pull prebuilt binaries from GitHub release
@@ -726,6 +883,7 @@ install_precommit() {
 # independent downloads in parallel and wait for all of them.
 install_apt
 configure_local_bin_path
+configure_aws_profile
 
 # Upgrade uv before anything uses it, so the Python it installs and the tools
 # below all come from the latest uv.
@@ -738,6 +896,12 @@ install_uv
 ( install_node; install_bun; install_corepack ) &
 install_rust &
 install_fly &
+# Cloud / Kubernetes tools for the ACME simulation (independent downloads).
+install_awscli &
+install_kubectl &
+install_helm &
+install_terraform &
+install_argocd &
 install_ripgrep &
 install_shellcheck &
 # Docker image development tools (all from GitHub, independent downloads).
@@ -770,7 +934,8 @@ missing=()
 for tool in gh shellcheck rg skopeo semgrep pre-commit uv bun node corepack go golangci-lint \
             goimports staticcheck gopls cargo-binstall fly hadolint dive \
             trivy crane cosign syft \
-            goreleaser trufflehog actionlint zizmor hey; do
+            goreleaser trufflehog actionlint zizmor hey \
+            aws kubectl helm terraform argocd; do
   command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
 done
 # The upgraded tools shadow image copies that always pass the check above, so

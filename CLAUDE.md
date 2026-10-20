@@ -102,12 +102,14 @@ to Trusted or Custom, so keep the README allowlist accurate anyway:
 - Under the default **Trusted** level these work (apt / PyPI / GitHub /
   githubusercontent / Go module proxy hosts): `gh`, `shellcheck`, `unzip`,
   `semgrep`, `ripgrep` (crates.io + GitHub), `zizmor`, `cargo-binstall`,
-  `golangci-lint`, the `go install` tools (`goimports`, `staticcheck`,
+  `golangci-lint`, `argocd`, the `go install` tools (`goimports`, `staticcheck`,
   `gopls`), Rust nightly (`static.rust-lang.org`), Node.js (`nodejs.org`) and
   `corepack` (npm registry).
 - `uv` and the Python upgrade (`astral.sh`; uv downloads Python from
   `releases.astral.sh`), `bun` (`bun.sh`), the Go toolchain tarball
-  (`go.dev/dl` redirects to `dl.google.com`), `flyctl` and `hey` (`hey.com`) download
+  (`go.dev/dl` redirects to `dl.google.com`), `flyctl`, `hey` (`hey.com`), the AWS CLI (`awscli.amazonaws.com`), `kubectl`
+  (`dl.k8s.io`), `helm` (`get.helm.sh`) and `terraform` (`releases.hashicorp.com`,
+  `checkpoint-api.hashicorp.com`) download
   from hosts **not** on the Trusted list, so the environment must use **Custom**
   access (with default package managers still enabled) plus the allowlist
   documented in the README's "Network access" section. Without those domains,

@@ -227,7 +227,8 @@ release assets), `golangci-lint` (`golangci-lint.run`
 is already listed below), the `go install` tools `goimports`/`staticcheck`/`gopls`
 (`proxy.golang.org`), the Docker image tools `hadolint`, `dive` and `trivy`, and
 the registry/supply-chain/CI tools `crane`, `cosign`, `syft`, `goreleaser`,
-`trufflehog` and `actionlint` (all from GitHub release assets), and the
+`trufflehog` and `actionlint` (all from GitHub release assets), the `argocd`
+CLI (GitHub release asset), and the
 toolchain upgrades for Rust nightly (`static.rust-lang.org`) and Node
 (`nodejs.org`), plus `corepack` (npm registry). The Python upgrade is not: `uv`
 downloads it from `releases.astral.sh` (see the allowlist below).
@@ -265,6 +266,10 @@ logs a warning and is skipped:
 - `flyctl` → `fly.io` / `*.fly.io` / `*.fly.dev` / `api.machines.dev`
 - `hey` → `hey.com` / `*.hey.com` (the installer redirects from `hey.com` to
   `www.hey.com`, then to GitHub; the CLI itself talks to HEY)
+- `aws` CLI → `awscli.amazonaws.com`
+- `kubectl` → `dl.k8s.io` / `cdn.dl.k8s.io`
+- `helm` → `get.helm.sh`
+- `terraform` → `checkpoint-api.hashicorp.com` (latest version) / `releases.hashicorp.com`
 - `zizmor` docs → `zizmor.sh` / `*.zizmor.sh` (the `docs.zizmor.sh` audit
   reference pages linked from each finding; the tool itself installs under
   Trusted via crates.io + GitHub)
@@ -288,6 +293,12 @@ fly.io
 api.machines.dev
 hey.com
 *.hey.com
+awscli.amazonaws.com
+dl.k8s.io
+cdn.dl.k8s.io
+get.helm.sh
+checkpoint-api.hashicorp.com
+releases.hashicorp.com
 astral.sh
 *.astral.sh
 bun.sh
