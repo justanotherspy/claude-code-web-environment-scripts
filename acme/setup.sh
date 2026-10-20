@@ -41,7 +41,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 # Go toolchain, kept in step with default/setup.sh by Renovate; overridable
 # with GO_VERSION.
-GO_VERSION="${GO_VERSION:-1.27.2}"
+GO_VERSION="${GO_VERSION:-1.27.3}"
 
 log()  { printf '\n=== setup: %s ===\n' "$*"; }
 warn() { printf 'setup: WARNING: %s\n' "$*" >&2; }
