@@ -7,8 +7,13 @@ A **setup script** is a Bash script that runs once, as root on Ubuntu 24.04,
 filesystem and reuses that snapshot for later sessions, so anything the script
 installs is available at the start of every session without reinstalling.
 
-This repo holds the setup script ([`default/setup.sh`](default/setup.sh)) plus
-guidance on how to write good ones.
+This repo holds the setup scripts plus guidance on how to write good ones.
+Each directory is one cloud environment:
+
+| Environment | Script | For |
+| --- | --- | --- |
+| Default | [`default/setup.sh`](default/setup.sh) | general work across repos (most of this README) |
+| ACME simulation | [`acme/setup.sh`](acme/setup.sh) | the ACME incident-response demo: Go, linters, and the AWS CLI, kubectl, helm, terraform and argocd, with a read-only AWS profile ([env vars](acme/.env.example)). Kept separate so AWS access never reaches the default environment |
 
 ## Contents
 

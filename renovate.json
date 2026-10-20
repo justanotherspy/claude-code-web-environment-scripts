@@ -6,8 +6,11 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Keep the pinned Go toolchain (GO_VERSION) in the setup script up to date",
-      "managerFilePatterns": ["default/setup.sh"],
+      "description": "Keep the pinned Go toolchain (GO_VERSION) in the setup scripts up to date",
+      "managerFilePatterns": [
+        "default/setup.sh",
+        "acme/setup.sh"
+      ],
       "matchStrings": [
         "GO_VERSION=\"\\$\\{GO_VERSION:-(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\}\""
       ],

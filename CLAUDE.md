@@ -11,7 +11,15 @@ cloud environments. The deliverable is a single file, `default/setup.sh`; the
 configure the environment. There is no application code, build system, or test
 suite here.
 
-Editing `default/setup.sh` does **not** change any live environment. The script
+A second, leaner script, `acme/setup.sh`, provisions a dedicated environment
+for the ACME simulation (Go, linters, AWS CLI, kubectl, helm, terraform,
+argocd, and a read-only `acme` AWS profile built from `ACME_AWS_*` env vars at
+session start). It follows every rule below and copies its shared install
+functions from `default/setup.sh`: fix a bug in one, fix it in both. Its
+example env vars live in `acme/.env.example`. Keep AWS tooling and credentials
+out of `default/`.
+
+Editing either script does **not** change any live environment. The script
 runs only after a human pastes its contents into the **Setup script** field of
 the cloud environment UI (and configures the matching network allowlist). Treat
 commits here as proposals that someone applies manually.
@@ -22,7 +30,8 @@ The only checks that apply are shell-syntax and lint:
 
 ```bash
 bash -n default/setup.sh          # syntax check
-shellcheck default/setup.sh       # lint
+bash -n acme/setup.sh
+shellcheck default/setup.sh acme/setup.sh  # lint
 ```
 
 Run both before committing any change to the script.
