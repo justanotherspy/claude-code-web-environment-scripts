@@ -6,8 +6,10 @@
 # (justanotherspy/acme-sim, acme-bot, oncall-kit). It keeps AWS access out of
 # the default environment. It is deliberately leaner than default/setup.sh:
 # the Go toolchain (the app is Go), shell/CI/container linters, and the
-# AWS / Kubernetes / Terraform / Argo CD CLIs, plus a read-only `acme` AWS
-# profile built from env vars at session start (see acme/.env.example).
+# AWS / Kubernetes / Terraform / Argo CD CLIs. AWS credentials are never
+# handled here: the environment stores a read-only key as an "AWS SigV4"
+# network secret, and the session proxy re-signs AWS requests with it (see
+# acme/credentials.example).
 #
 # Same rules as default/setup.sh (see README.md and CLAUDE.md): runs once as
 # root on Ubuntu 24.04 before Claude Code launches; every step is non-fatal
@@ -385,49 +387,9 @@ install_argocd() {
   rm -f "${tmp}"
 }
 
-# AWS profile for the ACME simulation. The setup script never sees
-# credentials, so this writes a profile.d snippet that builds ~/.aws/config at
-# session start from environment variables (see acme/.env.example):
-#   ACME_AWS_ACCESS_KEY_ID / ACME_AWS_SECRET_ACCESS_KEY: an IAM user that can
-#     only sts:AssumeRole into ACME_AWS_ROLE_ARN (a read-only role).
-#   ACME_AWS_ROLE_ARN, and optionally ACME_AWS_REGION (default eu-west-1).
-# The keys deliberately aren't named AWS_ACCESS_KEY_ID: env keys outrank
-# AWS_PROFILE, so every command would run as the bare user instead of the role.
-# For the same reason the snippet unsets the session's AWS_* key placeholders.
-# With the ACME_AWS_* variables unset, it does nothing.
-configure_aws_profile() {
-  log "AWS profile (acme, from ACME_AWS_* env vars at session start)"
-  cat > /etc/profile.d/zz-aws-acme.sh <<'PROFILE'
-# Build the `acme` AWS profile from ACME_AWS_* env vars and make it the
-# default. Managed by the Claude Code on the web setup script.
-if [ -n "${ACME_AWS_ACCESS_KEY_ID:-}" ] && [ -n "${ACME_AWS_SECRET_ACCESS_KEY:-}" ] \
-   && [ -n "${ACME_AWS_ROLE_ARN:-}" ]; then
-  _acme_region="${ACME_AWS_REGION:-eu-west-1}"
-  mkdir -p "${HOME}/.aws" && chmod 0700 "${HOME}/.aws"
-  ( umask 077
-    printf '[acme-base]\naws_access_key_id = %s\naws_secret_access_key = %s\n' \
-      "${ACME_AWS_ACCESS_KEY_ID}" "${ACME_AWS_SECRET_ACCESS_KEY}" > "${HOME}/.aws/credentials"
-    printf '[profile acme]\nrole_arn = %s\nsource_profile = acme-base\nrole_session_name = claude-code-web\nduration_seconds = 3600\nregion = %s\nsts_regional_endpoints = regional\n' \
-      "${ACME_AWS_ROLE_ARN}" "${_acme_region}" > "${HOME}/.aws/config" )
-  # The session sets AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY to `proxy-injected`
-  # placeholders, and env keys outrank AWS_PROFILE, so drop them here.
-  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
-  export AWS_PROFILE=acme AWS_REGION="${_acme_region}"
-  unset _acme_region
-fi
-PROFILE
-  chmod 0644 /etc/profile.d/zz-aws-acme.sh \
-    || warn "could not write /etc/profile.d/zz-aws-acme.sh"
-  if ! grep -q 'profile\.d/zz-aws-acme\.sh' /etc/bash.bashrc 2>/dev/null; then
-    printf '%s\n' '[ -f /etc/profile.d/zz-aws-acme.sh ] && . /etc/profile.d/zz-aws-acme.sh' \
-      >> /etc/bash.bashrc || warn "could not hook zz-aws-acme.sh into /etc/bash.bashrc"
-  fi
-}
-
 # apt holds the dpkg lock, so run it to completion first, then fan out the
 # independent downloads in parallel and wait for all of them.
 install_apt
-configure_aws_profile
 
 install_awscli &
 install_kubectl &
